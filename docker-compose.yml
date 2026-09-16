@@ -1,0 +1,25 @@
+services:
+  concepta:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: concepta
+    ports:
+      # NCD (Python) — снаружи 5000, внутри 8080
+      - "5000:8080"
+      # ThreatDetector API (.NET)
+      - "5001:5001"
+    environment:
+      - NCD_DEVICE=cpu
+      - NUMBA_NUM_THREADS=1
+      - NCD_CLUSTER_MODE=${NCD_CLUSTER_MODE:-blob}
+      - NCD_USE_DIFF=${NCD_USE_DIFF:-0}
+      - NCD_UMAP_REFIT_INTERVAL=${NCD_UMAP_REFIT_INTERVAL:-5}
+      - NcdService__Url=http://localhost:8080
+      - THREAT_DB_PATH=/data/threats.db
+    volumes:
+      - threatdb:/data
+    restart: unless-stopped
+
+volumes:
+  threatdb:

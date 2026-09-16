@@ -1,0 +1,74 @@
+.DS_Store
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+junit*.xml
+
+# Numba / JIT cache
+**/__pycache__/
+*.nbi
+*.nbc
+
+# --- IPython / notebooks ---
+.ipynb_checkpoints/
+*_cache/
+
+# --- ML / model caches (runtime downloads) ---
+**/ncdbody/models/
+.ncd/
+.cache/
+huggingface_cache/
+.hf/
+.kaggle/
+wandb/
+
+# --- .NET ---
+**/bin/
+**/obj/
+*.user
+*.suo
+*.userprefs
+
+# --- Node / JS ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+.vite/
+
+# --- DB / data ---
+threats.db
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Docker ---
+.docker/
+
+# --- Tooling ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.thumbnails

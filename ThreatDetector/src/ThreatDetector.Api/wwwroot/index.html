@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emerging Threat Detector</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #ffffff; color: #111111; overflow: hidden; }
+        
+        .header { background: #ffffff; padding: 12px 24px; border-bottom: 2px solid #000000; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 18px; color: #000000; }
+        .header .status { color: #000000; font-size: 12px; }
+        
+        .container { display: grid; grid-template-columns: 240px 1fr 300px; height: calc(100vh - 50px); }
+        
+        .sidebar { background: #ffffff; padding: 16px; border-right: 1px solid #000000; overflow-y: auto; }
+        .sidebar h2 { color: #000000; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+        
+        .source-item { display: flex; align-items: center; gap: 8px; padding: 8px; background: #f7f7f7; border: 1px solid #cccccc; border-radius: 6px; margin-bottom: 6px; font-size: 12px; }
+        .source-dot { width: 8px; height: 8px; border-radius: 50%; background: #000000; }
+        
+        .btn { background: #000000; color: #ffffff; border: 1px solid #000000; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; width: 100%; margin-top: 8px; }
+        .btn:hover { background: #333333; }
+        .btn:disabled { background: #cccccc; border-color: #cccccc; cursor: not-allowed; }
+        .btn-secondary { background: #ffffff; color: #000000; }
+        .btn-secondary:hover { background: #f0f0f0; }
+        
+        .center { position: relative; background: #ffffff; overflow: hidden; }
+        #heatmapCanvas { width: 100%; height: 100%; display: block; }
+        
+        .heatmap-overlay { position: absolute; top: 12px; left: 12px; background: rgba(255, 255, 255, 0.92); padding: 10px 14px; border-radius: 8px; font-size: 11px; border: 1px solid #000000; }
+        .heatmap-overlay .title { color: #000000; font-weight: 600; margin-bottom: 4px; }
+        
+        .legend { position: absolute; bottom: 12px; left: 12px; background: rgba(255, 255, 255, 0.92); padding: 10px; border-radius: 8px; border: 1px solid #000000; }
+        .legend canvas { border-radius: 4px; }
+        .legend .labels { display: flex; justify-content: space-between; font-size: 10px; color: #666666; margin-top: 4px; }
+        
+        .controls { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+        .control-btn { background: rgba(255, 255, 255, 0.92); border: 1px solid #000000; color: #000000; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+        .control-btn:hover { border-color: #000000; background: #f0f0f0; }
+        .control-btn.active { background: #000000; border-color: #000000; color: #ffffff; }
+        .zoom-controls { display: flex; gap: 4px; align-items: center; background: rgba(255, 255, 255, 0.92); border: 1px solid #000000; border-radius: 4px; padding: 2px; }
+        .zoom-controls .control-btn { border: none; background: transparent; padding: 4px 8px; }
+        .zoom-controls .control-btn:hover { background: #eeeeee; }
+        .zoom-level { color: #666666; font-size: 10px; min-width: 36px; text-align: center; }
+        
+        .concept-tooltip { position: absolute; display: none; background: rgba(255, 255, 255, 0.98); border: 1px solid #000000; border-radius: 10px; padding: 14px; font-size: 11px; max-width: 320px; pointer-events: none; z-index: 100; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+        .concept-tooltip .concept-title { color: #000000; font-weight: 600; margin-bottom: 8px; font-size: 13px; }
+        .concept-tooltip .concept-meta { color: #666666; font-size: 10px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #cccccc; }
+        .concept-tooltip .sentence { background: #f7f7f7; border: 1px solid #dddddd; border-radius: 4px; padding: 6px 8px; margin-bottom: 4px; font-size: 10px; color: #333333; line-height: 1.4; border-left: 2px solid #000000; }
+        .concept-tooltip .more { color: #000000; font-size: 10px; margin-top: 4px; }
+        
+        .right-panel { background: #ffffff; padding: 16px; border-left: 1px solid #000000; overflow-y: auto; }
+        .right-panel h2 { color: #000000; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+        
+        .threat-card { background: #f7f7f7; border: 1px solid #000000; border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; font-size: 12px; }
+        .threat-card:hover { border-color: #000000; background: #eeeeee; }
+        .threat-card.selected { border-color: #000000; border-width: 2px; box-shadow: 0 0 12px rgba(0, 0, 0, 0.3); }
+        .threat-title { font-weight: 600; margin-bottom: 4px; }
+        .threat-meta { color: #666666; font-size: 11px; }
+        .threat-strength { color: #000000; }
+        
+        .detail-section { margin-top: 12px; }
+        .detail-section h3 { color: #000000; font-size: 12px; margin-bottom: 8px; }
+        .sentence-item { background: #f7f7f7; border: 1px solid #dddddd; border-radius: 4px; padding: 8px; margin-bottom: 6px; font-size: 11px; color: #333333; line-height: 1.4; border-left: 2px solid #000000; }
+
+        .feed-section { margin-top: 16px; border-top: 1px solid #000000; padding-top: 12px; }
+        .feed-section h3 { color: #000000; font-size: 12px; margin-bottom: 8px; }
+        .feed-badge { background: #000000; color: #ffffff; font-size: 9px; border-radius: 8px; padding: 2px 6px; margin-left: 4px; }
+        .feed-item { background: #f7f7f7; border: 1px solid #dddddd; border-left: 3px solid #000000; border-radius: 4px; padding: 6px 8px; margin-bottom: 6px; font-size: 11px; }
+        .feed-item .feed-label { font-weight: 600; color: #000000; }
+        .feed-item .feed-meta { color: #666666; font-size: 10px; margin-top: 2px; }
+        .feed-item.new { border-left-color: #d00; }
+
+        .sparkline { width: 100%; height: 28px; margin-top: 6px; display: block; }
+        .sparkline path { fill: none; stroke: #000000; stroke-width: 1.5; }
+        .sparkline .dot { fill: #d00; }
+        
+        .summary-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 300; }
+        .summary-modal.active { display: flex; }
+        .summary-content { background: #ffffff; border: 1px solid #000000; border-radius: 12px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; }
+        .summary-content h2 { color: #000000; margin-bottom: 16px; font-size: 16px; }
+        .summary-card { background: #f7f7f7; border: 1px solid #dddddd; border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+        .summary-card .label { color: #000000; font-weight: 600; margin-bottom: 6px; }
+        .summary-card .text { color: #333333; font-size: 12px; line-height: 1.5; }
+        .summary-card .stats { color: #666666; font-size: 10px; margin-top: 8px; }
+        .close-btn { background: #000000; color: #ffffff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-top: 12px; }
+        
+        .stats-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #ffffff; padding: 6px 24px; border-top: 1px solid #000000; display: flex; gap: 24px; font-size: 11px; color: #666666; z-index: 50; }
+        .stats-bar .value { color: #000000; font-weight: 600; }
+
+        .timeline { position: absolute; left: 12px; right: 12px; bottom: 14px; background: rgba(255,255,255,0.95); border: 1px solid #000000; border-radius: 10px; padding: 8px 12px; z-index: 60; box-shadow: 0 4px 24px rgba(0,0,0,0.12); }
+        .timeline-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .timeline-controls .tl-play { background: #000000; color: #ffffff; border: none; border-radius: 50%; width: 26px; height: 26px; cursor: pointer; font-size: 12px; line-height: 1; }
+        .timeline-controls .tl-play.playing::before { content: '||'; font-size: 10px; }
+        .timeline-label { font-size: 11px; color: #000; font-weight: 600; white-space: nowrap; }
+        .timeline-label .span { font-weight: 400; color: #666; }
+        .timeline-track { position: relative; height: 34px; display: flex; align-items: center; gap: 2px; cursor: pointer; }
+        .timeline-cell { flex: 1; height: 22px; background: #b7e98a; border-radius: 3px; position: relative; min-width: 3px; }
+        .timeline-cell:hover { outline: 2px solid #000; }
+        .timeline-cell.active { outline: 2px solid #d00; z-index: 2; }
+        .timeline-legend { display: flex; gap: 12px; font-size: 9px; color: #666; margin-top: 4px; align-items: center; }
+        
+        .loading-text { color: #000000; font-size: 12px; animation: pulse-text 1.5s ease-in-out infinite; }
+        @keyframes pulse-text { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+    </style>
+
+    <!-- SignalR client for real-time concept updates -->
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
+</head>
+<body>
+    <div class="header">
+        <h1>Emerging Threat Detector</h1>
+        <div class="status" id="status">Connecting...</div>
+    </div>
+    
+    <div class="container">
+        <div class="sidebar">
+            <h2>Data Sources</h2>
+            <div id="sources">
+                <div class="source-item"><div class="source-dot"></div>Krebs on Security</div>
+                <div class="source-item"><div class="source-dot"></div>The Hacker News</div>
+                <div class="source-item"><div class="source-dot"></div>NVD CVE Feed</div>
+                <div class="source-item"><div class="source-dot"></div>BleepingComputer</div>
+                <div class="source-item"><div class="source-dot"></div>SecurityWeek</div>
+            </div>
+            <button class="btn" id="fetchBtn" onclick="fetchAndAnalyze()">Fetch & Analyze</button>
+            <button class="btn btn-secondary" onclick="generateSummaries()" id="summaryBtn">Generate Summaries</button>
+            <button class="btn btn-secondary" onclick="resetView()">Reset View</button>
+        </div>
+        
+        <div class="center">
+            <canvas id="heatmapCanvas"></canvas>
+            
+            <div class="heatmap-overlay">
+                <div class="title">Embedding Space (UMAP 2D)</div>
+                <div id="heatmapInfo">Documents: 0 | Bins: 400x400</div>
+            </div>
+            
+            <div class="legend">
+                <canvas id="legendCanvas" width="150" height="12"></canvas>
+                <div class="labels"><span>Low density</span><span>High density</span></div>
+            </div>
+            
+            <div class="controls">
+                <button class="control-btn active" onclick="setViewMode('heatmap')" id="btnHeatmap">Heatmap</button>
+                <button class="control-btn" onclick="setViewMode('points')" id="btnPoints">Points</button>
+                <button class="control-btn" onclick="toggleDiff()" id="btnDiff">Diff</button>
+                <div class="zoom-controls">
+                    <button class="control-btn" onclick="zoomIn()">+</button>
+                    <span class="zoom-level" id="zoomLevel">100%</span>
+                    <button class="control-btn" onclick="zoomOut()">-</button>
+                    <button class="control-btn" onclick="zoomReset()">Reset</button>
+                </div>
+            </div>
+
+            <div class="timeline" id="timeline">
+                <div class="timeline-controls">
+                    <button class="tl-play" id="tlPlay" onclick="toggleTimelinePlay()">&#9654;</button>
+                    <div class="timeline-label" id="timelineLabel">No periods yet</div>
+                </div>
+                <div class="timeline-track" id="timelineTrack"></div>
+                <div class="timeline-legend">
+                    <span style="margin-left:auto;">Click a bar to scrub / replay that period</span>
+                </div>
+            </div>
+            
+            <div class="concept-tooltip" id="tooltip"></div>
+            
+            <div class="loading-text" id="loading" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 200;"></div>
+        </div>
+        
+        <div class="right-panel">
+            <h2>Detected Concepts</h2>
+            <div id="threats"></div>
+            
+            <div class="detail-section" id="detailSection" style="display: none;">
+                <h3>Concept Details</h3>
+                <div id="detailContent"></div>
+            </div>
+
+            <div class="feed-section">
+                <h3>Live Feed <span class="feed-badge" id="feedBadge" style="display:none;">0 new</span></h3>
+                <div id="liveFeed"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="summary-modal" id="summaryModal">
+        <div class="summary-content">
+            <h2>Concept Summaries</h2>
+            <div id="summariesList"></div>
+            <button class="close-btn" onclick="closeSummaryModal()">Close</button>
+        </div>
+    </div>
+    
+    <div class="stats-bar">
+        <span>Embeddings: <span class="value" id="embeddingCount">0</span></span>
+        <span>Concepts: <span class="value" id="conceptCount">0</span></span>
+        <span>Periods: <span class="value" id="periodCount">0</span></span>
+        <span>Processing: <span class="value" id="processingTime">0ms</span></span>
+    </div>
+
+    <script>
+        // ===== Sentence Database for Concepts =====
+        const conceptSentences = {
+            'Zero-Day Exploit': [
+                'Critical zero-day vulnerability CVE-2024-38077 in Windows Hyper-V allows remote code execution.',
+                'Attackers actively exploiting zero-day in Ivanti Connect Secure VPN appliances.',
+                'Google Chrome zero-day (CVE-2024-4671) under active attack, patch immediately.',
+                'Microsoft patches actively exploited Windows kernel zero-day vulnerability.',
+                'Citrix warns of critical zero-day vulnerability being exploited in the wild.'
+            ],
+            'Ransomware Campaign': [
+                'LockBit 3.0 ransomware affiliates target manufacturing sector with new TTPs.',
+                'BlackCat/ALPHV ransomware group claims attack on major hospital network.',
+                'Royal ransomware shifts to MalasLocker variant targeting Linux systems.',
+                'Akira ransomware exploits Cisco VPN vulnerabilities for initial access.',
+                'Play ransomware gang leaks stolen data from 65 organizations.'
+            ],
+            'Supply Chain Attack': [
+                'Malicious code discovered in popular npm package with 2M weekly downloads.',
+                'SolarWinds-style attack targets software build pipelines at major tech company.',
+                'Compromised Docker images spread cryptominer to thousands of containers.',
+                'PyPI packages impersonate crypto libraries to steal developer keys.',
+                'GitHub Actions workflow used to inject backdoor into open source projects.'
+            ],
+            'APT Group Activity': [
+                'Lazarus Group targets defense contractors with new malware framework.',
+                'APT29 deploys novel backdoor in European government networks.',
+                'Volt Typhoon group pre-positions in US critical infrastructure.',
+                'Kimsuky APT uses AI-generated content in spear-phishing campaigns.',
+                'Sandworm team observed testing new OT/ICS attack capabilities.'
+            ],
+            'Data Breach': [
+                'Major healthcare provider confirms breach affecting 11 million patients.',
+                'Banking trojan exfiltrates customer data from 200+ financial institutions.',
+                'Cloud misconfiguration exposes 500M customer records at tech giant.',
+                'Insider threat leads to theft of proprietary AI models worth $500M.',
+                'Social media platform breach exposes private messages of 150M users.'
+            ],
+            'Phishing Wave': [
+                'AI-generated phishing emails bypass security controls at 3x normal rate.',
+                'QR code phishing (quishing) campaigns surge 587% in Q3 2024.',
+                'Microsoft 365 phishing pages now use legitimate cloud services for hosting.',
+                'Callback phishing attacks target executives with fake voicemail notifications.',
+                'Crypto wallet phishing kit steals $2.3M from DeFi users.'
+            ],
+            'Malware Variant': [
+                'New Rust-based malware evades EDR detection through syscall unhooking.',
+                'MacOS infostealer "MacStealer" targets iCloud keychain and crypto wallets.',
+                'Android banking trojan "Anatsa" adds new accessibility service abuse.',
+                'Fileless malware campaign uses PowerShell to deploy Cobalt Strike beacons.',
+                'Novel Linux rootkit hides processes using eBPF technology.'
+            ],
+            'DDoS Attack': [
+                'Record-breaking 3.47 Tbps DDoS attack targets cloud infrastructure provider.',
+                'Mirai botnet variant exploits IoT devices for 1 Tbps+ attacks.',
+                'HTTP/2 Rapid Reset attack technique causes widespread outages.',
+                'Memcached amplification attacks return with new reflection vectors.',
+                'DDoS-for-hire services offer AI-powered attack optimization.'
+            ],
+            'Insider Threat': [
+                'Employee exfiltrates 100GB of source code before joining competitor.',
+                'Cloud admin credentials sold on dark web for $50,000.',
+                'Contractor installs unauthorized remote access tool on production servers.',
+                'Former engineer deploys logic bomb after termination.',
+                'Privileged user accesses restricted data without business justification.'
+            ],
+            'Cryptojacking': [
+                'Kubernetes cluster hijacked for Monero mining through exposed API.',
+                'Browser-based cryptojacking scripts found on 1,000+ e-commerce sites.',
+                'Crypto miner malware exploits Log4j vulnerability at scale.',
+                'Cloud instances compromised through misconfigured IAM roles.',
+                'Supply chain attack delivers crypto miner through legitimate software update.'
+            ],
+            'IoT Vulnerability': [
+                'Smart home hub vulnerability allows complete network takeover.',
+                'Medical device firmware contains hardcoded credentials.',
+                'Industrial controller vulnerability enables physical process manipulation.',
+                'Connected car API flaw exposes location data of 1.5M vehicles.',
+                'Smart camera botnet launches massive DDoS attack.'
+            ],
+            'Cloud Misconfig': [
+                'Publicly accessible S3 bucket exposes government classified documents.',
+                'Kubernetes dashboard exposed to internet without authentication.',
+                'Azure Storage account with 40TB data left unencrypted.',
+                'AWS Lambda function with overly permissive IAM role.',
+                'Terraform state file contains database credentials in plaintext.'
+            ]
+        };
+        
+        // ===== Heatmap Engine =====
+        const canvas = document.getElementById('heatmapCanvas');
+        const ctx = canvas.getContext('2d');
+        const legendCanvas = document.getElementById('legendCanvas');
+        const legendCtx = legendCanvas.getContext('2d');
+        
+        let width, height;
+        let heatmapData = null;
+        let diffHeatmapData = null;
+        let points = [];
+        let blobs = [];
+        let viewMode = 'heatmap';
+        let showDiff = false;
+        let periodCount = 0;
+        let referenceHeatmap = null;
+        let animFrame = null;
+        
+        // Zoom & pan state
+        let zoom = 1;
+        let panX = 0, panY = 0;
+        let isPanning = false;
+        let panStartX = 0, panStartY = 0;
+        let panStartOffsetX = 0, panStartOffsetY = 0;
+        
+        let heatmapRenderCache = null;
+
+        function generatePalette() {
+            const colors = [];
+            const stops = [
+                [0, [10, 10, 30]], [0.15, [20, 40, 80]], [0.3, [30, 80, 120]],
+                [0.45, [50, 140, 140]], [0.6, [100, 180, 100]], [0.75, [180, 180, 50]],
+                [0.9, [220, 120, 30]], [1.0, [233, 69, 96]]
+            ];
+            for (let i = 0; i < 256; i++) {
+                const t = i / 255;
+                let c1, c2, t1 = 0, t2 = 1;
+                for (let j = 0; j < stops.length - 1; j++) {
+                    if (t >= stops[j][0] && t <= stops[j + 1][0]) {
+                        c1 = stops[j][1]; c2 = stops[j + 1][1];
+                        t1 = stops[j][0]; t2 = stops[j + 1][0];
+                        break;
+                    }
+                }
+                if (!c1) { c1 = stops[stops.length - 1][1]; c2 = c1; }
+                const f = (t - t1) / (t2 - t1 || 1);
+                colors.push([
+                    Math.round(c1[0] + (c2[0] - c1[0]) * f),
+                    Math.round(c1[1] + (c2[1] - c1[1]) * f),
+                    Math.round(c1[2] + (c2[2] - c1[2]) * f)
+                ]);
+            }
+            return colors;
+        }
+        
+        function resize() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width * window.devicePixelRatio;
+            canvas.height = rect.height * window.devicePixelRatio;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+            width = rect.width;
+            height = rect.height;
+            render();
+        }
+        window.addEventListener('resize', resize);
+        
+        // ===== Heatmap Generation =====
+        function generateHeatmap(pts, bins = 200) {
+            if (!pts.length) return null;
+            const xs = pts.map(p => p.x);
+            const ys = pts.map(p => p.y);
+            const minX = Math.min(...xs) - 0.1;
+            const maxX = Math.max(...xs) + 0.1;
+            const minY = Math.min(...ys) - 0.1;
+            const maxY = Math.max(...ys) + 0.1;
+            
+            const grid = Array.from({ length: bins }, () => new Float32Array(bins));
+            pts.forEach(p => {
+                const bx = Math.floor((p.x - minX) / (maxX - minX) * (bins - 1));
+                const by = Math.floor((p.y - minY) / (maxY - minY) * (bins - 1));
+                if (bx >= 0 && bx < bins && by >= 0 && by < bins) grid[by][bx] += 1;
+            });
+            return smoothHeatmap(grid, 2);
+        }
+        
+        function smoothHeatmap(grid, sigma) {
+            const rows = grid.length, cols = grid[0].length;
+            const out = Array.from({ length: rows }, () => new Float32Array(cols));
+            const kernelSize = Math.ceil(sigma * 3) * 2 + 1;
+            const half = Math.floor(kernelSize / 2);
+            const kernel = [];
+            let sum = 0;
+            for (let i = 0; i < kernelSize; i++) {
+                const v = Math.exp(-Math.pow(i - half, 2) / (2 * sigma * sigma));
+                kernel.push(v); sum += v;
+            }
+            kernel.forEach((_, i) => kernel[i] /= sum);
+            
+            const tmp = Array.from({ length: rows }, () => new Float32Array(cols));
+            for (let r = 0; r < rows; r++)
+                for (let c = 0; c < cols; c++) {
+                    let val = 0;
+                    for (let k = 0; k < kernelSize; k++) {
+                        const cc = Math.min(cols - 1, Math.max(0, c + k - half));
+                        val += grid[r][cc] * kernel[k];
+                    }
+                    tmp[r][c] = val;
+                }
+            for (let r = 0; r < rows; r++)
+                for (let c = 0; c < cols; c++) {
+                    let val = 0;
+                    for (let k = 0; k < kernelSize; k++) {
+                        const rr = Math.min(rows - 1, Math.max(0, r + k - half));
+                        val += tmp[rr][c] * kernel[k];
+                    }
+                    out[r][c] = val;
+                }
+            return out;
+        }
+        
+        function computeDiffHeatmap(current, reference) {
+            if (!reference) return current;
+            const rows = current.length, cols = current[0].length;
+            const diff = Array.from({ length: rows }, () => new Float32Array(cols));
+            for (let r = 0; r < rows; r++)
+                for (let c = 0; c < cols; c++)
+                    diff[r][c] = Math.max(0, current[r][c] - reference[r][c] * 0.8);
+            return diff;
+        }
+        
+        // ===== Blob Animation =====
+        function easeOutElastic(t) {
+            const p = 0.4;
+            return Math.pow(2, -10 * t) * Math.sin((t - p / 4) * (2 * Math.PI) / p) + 1;
+        }
+        
+        function easeOutCubic(t) {
+            return 1 - Math.pow(1 - t, 3);
+        }
+        
+        function animateBlobs() {
+            const now = performance.now();
+            let needsUpdate = false;
+            
+            blobs.forEach(blob => {
+                if (blob.appearStart === undefined) return;
+                const elapsed = now - blob.appearStart;
+                const duration = 600;
+                const delay = blob.appearDelay || 0;
+                const t = Math.max(0, Math.min(1, (elapsed - delay) / duration));
+                
+                if (t < 1) needsUpdate = true;
+                
+                blob.animScale = easeOutElastic(t);
+                blob.animOpacity = easeOutCubic(Math.min(1, t * 2));
+            });
+            
+            render();
+            
+            if (needsUpdate) {
+                animFrame = requestAnimationFrame(animateBlobs);
+            } else {
+                animFrame = null;
+            }
+        }
+        
+        // ===== Zoom & Pan =====
+        function zoomIn() { setZoom(zoom * 1.3); }
+        function zoomOut() { setZoom(zoom / 1.3); }
+        function zoomReset() { zoom = 1; panX = 0; panY = 0; updateZoomLabel(); render(); }
+        
+        function setZoom(newZoom) {
+            const oldZoom = zoom;
+            zoom = Math.max(0.3, Math.min(20, newZoom));
+            // Zoom toward center
+            panX = panX * (zoom / oldZoom);
+            panY = panY * (zoom / oldZoom);
+            updateZoomLabel();
+            render();
+        }
+        
+        function updateZoomLabel() {
+            document.getElementById('zoomLevel').textContent = Math.round(zoom * 100) + '%';
+        }
+        
+        function screenToWorld(sx, sy) {
+            return { x: (sx - panX) / zoom, y: (sy - panY) / zoom };
+        }
+        
+        function worldToScreen(wx, wy) {
+            return { x: wx * zoom + panX, y: wy * zoom + panY };
+        }
+        
+        // Mouse wheel zoom
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            
+            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            const newZoom = Math.max(0.3, Math.min(20, zoom * factor));
+            
+            // Zoom toward mouse position
+            panX = mx - (mx - panX) * (newZoom / zoom);
+            panY = my - (my - panY) * (newZoom / zoom);
+            zoom = newZoom;
+            
+            updateZoomLabel();
+            render();
+        }, { passive: false });
+        
+        // Pan with mouse drag
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            const rect = canvas.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+            const world = screenToWorld(sx, sy);
+            const mx = world.x / width;
+            const my = world.y / height;
+            
+            // Check if clicking a blob — don't pan
+            for (const blob of blobs) {
+                const dx = mx - blob.x, dy = my - blob.y;
+                if (Math.sqrt(dx * dx + dy * dy) < blob.radius * 2) return;
+            }
+            
+            isPanning = true;
+            panStartX = e.clientX;
+            panStartY = e.clientY;
+            panStartOffsetX = panX;
+            panStartOffsetY = panY;
+            canvas.style.cursor = 'grabbing';
+        });
+        
+        window.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+            panX = panStartOffsetX + (e.clientX - panStartX);
+            panY = panStartOffsetY + (e.clientY - panStartY);
+            render();
+        });
+        
+        window.addEventListener('mouseup', () => {
+            if (isPanning) {
+                isPanning = false;
+                canvas.style.cursor = 'default';
+            }
+        });
+        
+        // Touch zoom (pinch) and pan
+        let touchDist = 0;
+        let touchCenter = null;
+        
+        canvas.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                touchDist = Math.sqrt(dx * dx + dy * dy);
+                const rect = canvas.getBoundingClientRect();
+                touchCenter = {
+                    x: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left,
+                    y: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top,
+                };
+            } else if (e.touches.length === 1) {
+                isPanning = true;
+                panStartX = e.touches[0].clientX;
+                panStartY = e.touches[0].clientY;
+                panStartOffsetX = panX;
+                panStartOffsetY = panY;
+            }
+        }, { passive: false });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const newDist = Math.sqrt(dx * dx + dy * dy);
+                const factor = newDist / touchDist;
+                const newZoom = Math.max(0.3, Math.min(20, zoom * factor));
+                
+                if (touchCenter) {
+                    panX = touchCenter.x - (touchCenter.x - panX) * (newZoom / zoom);
+                    panY = touchCenter.y - (touchCenter.y - panY) * (newZoom / zoom);
+                }
+                zoom = newZoom;
+                touchDist = newDist;
+                updateZoomLabel();
+                render();
+            } else if (e.touches.length === 1 && isPanning) {
+                panX = panStartOffsetX + (e.touches[0].clientX - panStartX);
+                panY = panStartOffsetY + (e.touches[0].clientY - panStartY);
+                render();
+            }
+        }, { passive: false });
+        
+        canvas.addEventListener('touchend', () => {
+            isPanning = false;
+            touchDist = 0;
+            touchCenter = null;
+        });
+        
+        // ===== Rendering =====
+        function render() {
+            if (!ctx) return;
+            
+            // Pure white background
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, width, height);
+            
+            ctx.save();
+            ctx.translate(panX, panY);
+            ctx.scale(zoom, zoom);
+            
+            drawGrid();
+            
+            const data = showDiff ? diffHeatmapData : heatmapData;
+            if (data && viewMode === 'heatmap') drawHeatmap(data);
+            if (viewMode === 'points' || !data) drawPoints();
+            drawBlobs();
+            drawConceptLabels();
+            
+            ctx.restore();
+        }
+        
+        function drawGrid() {
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.05)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 6]);
+            for (let i = 1; i < 12; i++) {
+                const x = (i / 12) * width;
+                const y = (i / 12) * height;
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+            }
+            ctx.setLineDash([]);
+        }
+        
+        function drawHeatmap(data) {
+            const bins = data.length;
+            let maxVal = 0;
+            for (let r = 0; r < bins; r++)
+                for (let c = 0; c < bins; c++)
+                    maxVal = Math.max(maxVal, data[r][c]);
+            if (maxVal === 0) return;
+            
+            // Cache the rasterized density picture per dataset
+            let src = heatmapRenderCache && heatmapRenderCache.ref === data ? heatmapRenderCache.canvas : null;
+            if (!src) {
+                const off = document.createElement('canvas');
+                off.width = bins; off.height = bins;
+                const octx = off.getContext('2d');
+                const img = octx.createImageData(bins, bins);
+                const d = img.data;
+                for (let r = 0; r < bins; r++) {
+                    for (let c = 0; c < bins; c++) {
+                        const v = data[r][c] / maxVal;
+                        if (v < 0.02) continue;
+                        const i = (r * bins + c) * 4;
+                        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+                        d[i + 3] = Math.min(1, v * 1.4) * 200;
+                    }
+                }
+                octx.putImageData(img, 0, 0);
+                heatmapRenderCache = { ref: data, canvas: off };
+                src = off;
+            }
+            
+            // Thin black density contours on white
+            ctx.save();
+            ctx.imageSmoothingEnabled = true;
+            ctx.globalCompositeOperation = 'darken';
+            ctx.globalAlpha = 0.4;
+            ctx.drawImage(src, 0, 0, bins, bins, 0, 0, width, height);
+            ctx.globalAlpha = 1;
+            ctx.restore();
+        }
+        
+        function drawPoints() {
+            points.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x * width, p.y * height, 2, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fill();
+            });
+        }
+        
+        function drawBlobs() {
+            blobs.forEach((blob) => {
+                const scale = blob.animScale !== undefined ? blob.animScale : 1;
+                const opacity = blob.animOpacity !== undefined ? blob.animOpacity : 1;
+                if (opacity <= 0) return;
+                
+                const cx = blob.x * width, cy = blob.y * height;
+                const r = blob.radius * Math.min(width, height) * scale;
+                
+                ctx.globalAlpha = opacity;
+                
+                // Glow
+                const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 2);
+                gradient.addColorStop(0, 'rgba(0, 0, 0, 0.25)');
+                gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.07)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.beginPath();
+                ctx.arc(cx, cy, r * 2, 0, Math.PI * 2);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+                
+                // Pulse ring
+                if (scale < 1) {
+                    const pulseR = r * (1 + (1 - scale) * 0.5);
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, pulseR, 0, Math.PI * 2);
+                    ctx.strokeStyle = `rgba(0, 0, 0, ${0.6 * (1 - scale)})`;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+                
+                // Circle
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.strokeStyle = blob.hovered ? '#000' : '#000';
+                ctx.lineWidth = blob.hovered ? 3 : 2;
+                ctx.stroke();
+                
+                // Center dot
+                ctx.beginPath();
+                ctx.arc(cx, cy, 4 * scale, 0, Math.PI * 2);
+                ctx.fillStyle = '#000';
+                ctx.fill();
+                
+                ctx.globalAlpha = 1;
+            });
+        }
+        
+        function drawConceptLabels() {
+            ctx.font = '11px Segoe UI, sans-serif';
+            ctx.textAlign = 'center';
+            blobs.forEach(blob => {
+                if (!blob.label) return;
+                const opacity = blob.animOpacity !== undefined ? blob.animOpacity : 1;
+                if (opacity <= 0) return;
+                
+                const cx = blob.x * width, cy = blob.y * height;
+                const r = blob.radius * Math.min(width, height);
+                const textWidth = ctx.measureText(blob.label).width + 12;
+                
+                ctx.globalAlpha = opacity;
+                
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.roundRect(cx - textWidth / 2, cy + r + 8, textWidth, 18, 4);
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#000';
+                ctx.fillText(blob.label, cx, cy + r + 20);
+                
+                ctx.globalAlpha = 1;
+            });
+        }
+        
+        function renderLegend() {
+            for (let x = 0; x < legendCanvas.width; x++) {
+                const t = x / legendCanvas.width;
+                const gray = Math.round((1 - t) * 230);
+                legendCtx.fillStyle = `rgb(${gray},${gray},${gray})`;
+                legendCtx.fillRect(x, 0, 1, legendCanvas.height);
+            }
+        }
+        
+        // ===== Data Management =====
+        function addPoints(newPoints, periodId) {
+            const colors = ['#e94560', '#00ff88', '#4ecdc4', '#ffe66d', '#ff6b6b', '#c44dff'];
+            const color = colors[periodCount % colors.length];
+            newPoints.forEach(p => points.push({ ...p, color, period: periodId }));
+            
+            heatmapData = generateHeatmap(points);
+            diffHeatmapData = referenceHeatmap ? computeDiffHeatmap(heatmapData, referenceHeatmap) : heatmapData;
+            
+            if (periodCount % 3 === 0 && heatmapData) referenceHeatmap = heatmapData;
+            periodCount++;
+            updateStats();
+            render();
+        }
+        
+        function setBlobs(newBlobs, animate = false) {
+            if (animFrame) cancelAnimationFrame(animFrame);
+            
+            if (animate) {
+                const now = performance.now();
+                newBlobs.forEach((blob, i) => {
+                    blob.appearStart = now;
+                    blob.appearDelay = i * 80;
+                    blob.animScale = 0;
+                    blob.animOpacity = 0;
+                });
+            }
+            
+            blobs = newBlobs;
+            
+            if (animate) {
+                animFrame = requestAnimationFrame(animateBlobs);
+            } else {
+                render();
+            }
+        }
+        
+        function updateStats() {
+            document.getElementById('embeddingCount').textContent = points.length;
+            document.getElementById('periodCount').textContent = periodCount;
+        }
+        
+        // ===== View Controls =====
+        function setViewMode(mode) {
+            viewMode = mode;
+            document.querySelectorAll('.control-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(mode === 'heatmap' ? 'btnHeatmap' : 'btnPoints').classList.add('active');
+            render();
+        }
+        
+        function toggleDiff() {
+            showDiff = !showDiff;
+            document.getElementById('btnDiff').classList.toggle('active', showDiff);
+            render();
+        }
+        
+        function resetView() {
+            if (animFrame) cancelAnimationFrame(animFrame);
+            points = []; blobs = []; heatmapData = null; diffHeatmapData = null; referenceHeatmap = null;
+            periodCount = 0;
+            zoom = 1; panX = 0; panY = 0;
+            updateZoomLabel();
+            document.getElementById('threats').innerHTML = '';
+            document.getElementById('detailSection').style.display = 'none';
+            updateStats();
+            render();
+        }
+        
+        // ===== Global Timeline (E) =====
+        let periodsData = [];
+        let currentPeriodIndex = -1;
+        let timelinePlaying = false;
+        let timelineTimer = null;
+        
+        async function loadTimeline() {
+            try {
+                const resp = await fetch('/api/v1/concepts/periods?limit=1000');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                periodsData = data.periods || [];
+                renderTimeline();
+            } catch (e) {
+                console.warn('timeline load failed:', e);
+            }
+        }
+        
+        function renderTimeline() {
+            const track = document.getElementById('timelineTrack');
+            const label = document.getElementById('timelineLabel');
+            if (!periodsData.length) {
+                track.innerHTML = '<div class="timeline-label" style="flex:1;color:#999;">Waiting for periods from the engine...</div>';
+                if (label) label.textContent = 'No periods yet';
+                return;
+            }
+            const tick = periodsData.length > 60 ? 10 : 5;
+            const cellsHtml = periodsData.map((p, i) => {
+                const active = i === currentPeriodIndex ? 'active' : '';
+                return `<div class="timeline-cell ${active}" data-idx="${i}" title="${escHtml(p.periodId)} · ${p.novelConcepts || 0} new">${(i + 1) % tick === 0 ? (i + 1) : ''}</div>`;
+            }).join('');
+            track.innerHTML = cellsHtml;
+            track.querySelectorAll('.timeline-cell').forEach(cell => {
+                cell.onclick = () => scrubToPeriod(parseInt(cell.dataset.idx, 10));
+            });
+            const cur = periodsData[currentPeriodIndex];
+            label.textContent = cur
+                ? `Period ${currentPeriodIndex + 1}/${periodsData.length} — ${cur.periodId} · ${cur.totalDocuments || 0} docs · ${cur.novelConcepts || 0} new`
+                : `${periodsData.length} period(s) — click a bar to replay`;
+        }
+        
+        function scrubToPeriod(idx) {
+            if (idx < 0 || idx >= periodsData.length) return;
+            currentPeriodIndex = idx;
+            const period = periodsData[idx];
+            const concepts = period.concepts || [];
+            const newBlobs = concepts.map(c => ({
+                x: ((c.coordinates?.[0] || 200) / 400),
+                y: ((c.coordinates?.[1] || 200) / 400),
+                radius: 0.02 + (c.strength || 0.1) * 0.03,
+                strength: c.strength || 0,
+                label: (c.summary || c.label || 'Concept').substring(0, 30),
+                docCount: c.documentCount || 0,
+                period: period.periodId,
+                sentences: [],
+                source: '',
+                conceptId: c.conceptId || '',
+                newlySeen: false,
+            }));
+            setBlobs(newBlobs, true);
+            if (newBlobs.length) displayThreats(newBlobs, true);
+            renderTimeline();
+        }
+        
+        function toggleTimelinePlay() {
+            const btn = document.getElementById('tlPlay');
+            timelinePlaying = !timelinePlaying;
+            btn.classList.toggle('playing', timelinePlaying);
+            btn.innerHTML = timelinePlaying ? '&#10073;&#10073;' : '&#9654;';
+            if (timelinePlaying) {
+                if (currentPeriodIndex >= periodsData.length - 1) currentPeriodIndex = -1;
+                timelinePlayNext();
+            } else if (timelineTimer) {
+                clearTimeout(timelineTimer);
+                timelineTimer = null;
+            }
+        }
+        
+        function timelinePlayNext() {
+            if (!timelinePlaying) return;
+            if (!periodsData.length) { toggleTimelinePlay(); return; }
+            const next = currentPeriodIndex + 1;
+            if (next >= periodsData.length) {
+                toggleTimelinePlay();
+                currentPeriodIndex = periodsData.length - 1;
+                renderTimeline();
+                return;
+            }
+            scrubToPeriod(next);
+            timelineTimer = setTimeout(timelinePlayNext, 1200);
+        }
+        
+        // ===== Tooltip with Sentences =====
+        canvas.addEventListener('mousemove', (e) => {
+            if (isPanning) return;
+            const rect = canvas.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+            const world = screenToWorld(sx, sy);
+            const mx = world.x / width;
+            const my = world.y / height;
+            
+            let found = null;
+            blobs.forEach(b => {
+                b.hovered = false;
+                const dx = mx - b.x, dy = my - b.y;
+                if (Math.sqrt(dx * dx + dy * dy) < b.radius * 2) found = b;
+            });
+            
+            const tooltip = document.getElementById('tooltip');
+            if (found) {
+                found.hovered = true;
+                canvas.style.cursor = 'pointer';
+                
+                const sentences = found.sentences || [];
+                const sentencesHtml = sentences.slice(0, 3).map(s => 
+                    `<div class="sentence">${s}</div>`
+                ).join('');
+                const moreText = sentences.length > 3 ? `<div class="more">+${sentences.length - 3} more sentences...</div>` : '';
+                
+                tooltip.style.display = 'block';
+                tooltip.style.left = Math.min(sx + 15, width - 340) + 'px';
+                tooltip.style.top = Math.min(sy - 10, height - 200) + 'px';
+                tooltip.innerHTML = `
+                    <div class="concept-title">${found.label || 'Unknown Concept'}</div>
+                    <div class="concept-meta">Strength: ${(found.strength || 0).toFixed(3)} | Documents: ${found.docCount || 0} | Period: ${found.period || '-'}</div>
+                    ${sentencesHtml}
+                    ${moreText}
+                `;
+            } else {
+                canvas.style.cursor = 'default';
+                tooltip.style.display = 'none';
+            }
+            render();
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            blobs.forEach(b => b.hovered = false);
+            document.getElementById('tooltip').style.display = 'none';
+            render();
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+            const world = screenToWorld(sx, sy);
+            const mx = world.x / width;
+            const my = world.y / height;
+            
+            for (const blob of blobs) {
+                const dx = mx - blob.x, dy = my - blob.y;
+                if (Math.sqrt(dx * dx + dy * dy) < blob.radius * 2) {
+                    selectThreatByBlob(blob);
+                    break;
+                }
+            }
+        });
+        
+        // ===== Summaries =====
+        function escHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+        
+        async function generateSummaries() {
+            const btn = document.getElementById('summaryBtn');
+            const list = document.getElementById('summariesList');
+            btn.disabled = true;
+            btn.textContent = 'Summarizing with Granite...';
+            
+            list.innerHTML = '<div class="loading-text">Granite-4.0-1B digesting the whole embedding space...</div>';
+            document.getElementById('summaryModal').classList.add('active');
+            
+            let summaryText = '';
+            let conceptsInput = [];
+            let fallback = false;
+            let severity = '';
+            let iocs = null;
+            let mitre = [];
+            let actions = [];
+            
+            if (blobs.length) {
+                try {
+                    const resp = await fetch('/api/v1/analyze/summarize', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            concepts: blobs.map(b => ({
+                                label: b.label,
+                                strength: b.strength || 0,
+                                docCount: b.docCount || 0,
+                                sentences: (b.sentences || []).slice(0, 3),
+                            }))
+                        }),
+                    });
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        summaryText = data.summary || '';
+                        conceptsInput = data.conceptsInput || [];
+                        fallback = !!data.fallback;
+                        severity = data.severity || '';
+                        iocs = data.iocs || null;
+                        mitre = data.mitre_techniques || data.mitreTechniques || [];
+                        actions = data.recommended_actions || data.recommendedActions || [];
+                    } else {
+                        fallback = true;
+                    }
+                } catch (e) {
+                    console.warn('LLM summary failed, falling back to templates:', e);
+                    fallback = true;
+                }
+            } else {
+                fallback = true;
+            }
+            
+            if (fallback || !summaryText) {
+                list.innerHTML = blobs.map(blob => {
+                    const sentences = blob.sentences || [];
+                    const summary = generateAutoSummary(blob.label, sentences);
+                    return `
+                        <div class="summary-card">
+                            <div class="label">${escHtml(blob.label)}</div>
+                            <div class="text">${escHtml(summary)}</div>
+                            <div class="stats">Documents: ${blob.docCount || 0} | Strength: ${(blob.strength || 0).toFixed(3)} | First detected: Period ${blob.period || '?'}</div>
+                        </div>
+                    `;
+                }).join('') || '<div class="loading">No concepts loaded. Run Fetch & Analyze first.</div>';
+            } else {
+                const iocBlocks = iocs ? Object.entries(iocs)
+                    .filter(([k, v]) => v && v.length)
+                    .map(([k, v]) => `<div class="sentence-item"><strong>${escHtml(k)}:</strong> ${escHtml(v.slice(0, 8).join(', '))}${v.length > 8 ? '…' : ''}</div>`)
+                    .join('') : '';
+                const mitreLine = mitre.length
+                    ? mitre.map(m => `${m.id || m}.${m.name ? ' ' + escHtml(m.name) : ''}`).join(' · ')
+                    : 'none detected';
+                const actionLine = actions.length ? '<ul>' + actions.map(a => `<li>${escHtml(a)}</li>`).join('') + '</ul>' : '';
+
+                list.innerHTML = `
+                    <div class="summary-card">
+                        <div class="label">LLM Digest of the Embedding Space ${severity ? `<span style="text-transform:uppercase;color:#c00;">[${escHtml(severity)}]</span>` : ''}</div>
+                        <div class="text" style="white-space:pre-wrap;">${escHtml(summaryText)}</div>
+                        <div class="stats">Granite-4.0-1B (Q4_K_M) | ${conceptsInput.length} concepts | LLM summary</div>
+                    </div>
+                    ${iocBlocks ? `<div class="summary-card"><div class="label">Extracted IOCs</div>${iocBlocks}</div>` : ''}
+                    <div class="summary-card">
+                        <div class="label">MITRE ATT&amp;CK</div>
+                        <div class="text">${mitreLine}</div>
+                        <div class="label" style="margin-top:8px;">Recommended actions</div>
+                        <div class="text">${actionLine || 'See digest for guidance.'}</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="label">Concepts in space</div>
+                        <div class="text">${conceptsInput.map(escHtml).join('  ·  ')}</div>
+                    </div>
+                `;
+            }
+            
+            btn.disabled = false;
+            btn.textContent = 'Generate Summaries';
+        }
+        
+        function generateAutoSummary(label, sentences) {
+            if (!sentences.length) return `No data available for ${label}.`;
+            
+            const templates = {
+                'Zero-Day Exploit': `Emerging zero-day vulnerability detected with high exploit potential. ${sentences.length} related reports indicate active exploitation in the wild. Immediate patching recommended.`,
+                'Ransomware Campaign': `New ransomware campaign identified targeting multiple sectors. ${sentences.length} incidents reported with double-extortion tactics. Organizations should verify backup integrity.`,
+                'Supply Chain Attack': `Supply chain compromise detected affecting software distribution. ${sentences.length} compromised packages identified. Developers should audit dependencies immediately.`,
+                'APT Group Activity': `Advanced Persistent Threat group activity detected with novel TTPs. ${sentences.length} indicators suggest state-sponsored operations. Enhanced monitoring recommended.`,
+                'Data Breach': `Significant data breach event detected. ${sentences.length} reports indicate large-scale data exfiltration. Affected organizations should initiate incident response.`,
+                'Phishing Wave': `Coordinated phishing campaign detected with evolving techniques. ${sentences.length} variants observed using AI-generated content. User awareness training recommended.`,
+                'Malware Variant': `Novel malware variant identified evading traditional security controls. ${sentences.length} samples analyzed showing advanced evasion techniques.`,
+                'DDoS Attack': `Distributed Denial of Service attack detected at scale. ${sentences.length} reports indicate botnet-driven attacks exceeding 1 Tbps.`,
+                'Insider Threat': `Potential insider threat activity detected through anomalous behavior. ${sentences.length} suspicious events logged requiring investigation.`,
+                'Cryptojacking': `Unauthorized cryptocurrency mining detected in environment. ${sentences.length} compromised resources identified. Resource monitoring recommended.`,
+                'IoT Vulnerability': `Critical IoT device vulnerability discovered with potential for network compromise. ${sentences.length} affected device types identified.`,
+                'Cloud Misconfig': `Cloud infrastructure misconfiguration detected exposing sensitive data. ${sentences.length} instances require immediate remediation.`
+            };
+            
+            return templates[label] || `Threat pattern "${label}" detected with ${sentences.length} supporting evidence points. Analysis indicates emerging risk requiring attention.`;
+        }
+        
+        function closeSummaryModal() {
+            document.getElementById('summaryModal').classList.remove('active');
+        }
+        
+        // ===== API Integration =====
+        async function fetchAndAnalyze() {
+            const btn = document.getElementById('fetchBtn');
+            const loading = document.getElementById('loading');
+            btn.disabled = true;
+            loading.style.display = 'block';
+            loading.textContent = 'Fetching feeds...';
+            btn.textContent = 'Fetching feeds...';
+            
+            try {
+                // 1. Call real .NET API -> fetches RSS/CVE -> sends to Python NCD
+                const resp = await fetch('/api/v1/analyze/fetch-and-analyze?source=rss', { method: 'POST' });
+                
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.details || err.error || 'Analysis failed');
+                }
+                
+                loading.textContent = 'Processing embeddings...';
+                btn.textContent = 'Processing embeddings...';
+                
+                const result = await resp.json();
+                
+                // 2. If NCD returned concepts with coordinates, plot them
+                if (result.concepts && result.concepts.length > 0) {
+                    // Convert NCD coordinates to canvas points
+                    const newPoints = [];
+                    result.concepts.forEach(c => {
+                        const coords = c.coordinates || [Math.random(), Math.random()];
+                        for (let i = 0; i < (c.documentCount || 10); i++) {
+                            newPoints.push({
+                                x: (coords[0] / 400) + (Math.random() - 0.5) * 0.04,
+                                y: (coords[1] / 400) + (Math.random() - 0.5) * 0.04,
+                            });
+                        }
+                    });
+                    addPoints(newPoints, result.periodId);
+                    
+                    // 3. Create blobs from real concepts with animation
+                    const newBlobs = result.concepts.map(c => ({
+                        x: ((c.coordinates?.[0] || 200) / 400),
+                        y: ((c.coordinates?.[1] || 200) / 400),
+                        radius: 0.02 + (c.strength || 0.1) * 0.03,
+                        strength: c.strength || 0,
+                        label: c.summary?.substring(0, 30) || c.source || 'Unknown Concept',
+                        docCount: c.documentCount || 0,
+                        period: result.periodId,
+                        sentences: c.sentences || [],
+                        source: c.source || '',
+                        conceptId: c.conceptId || '',
+                        newlySeen: false,
+                    }));
+                    setBlobs(newBlobs, true);
+                    displayThreats(newBlobs, true);
+                } else {
+                    const randomPoints = [];
+                    for (let i = 0; i < result.totalDocuments || 50; i++) {
+                        randomPoints.push({ x: Math.random(), y: Math.random() });
+                    }
+                    addPoints(randomPoints, result.periodId);
+                    displayThreats([]);
+                }
+                
+                document.getElementById('processingTime').textContent = 
+                    (result.processingTimeMs || 0).toFixed(0) + 'ms';
+                document.getElementById('embeddingCount').textContent = 
+                    (result.totalDocuments || points.length);
+                
+                loadTimeline();
+                    
+            } catch (e) {
+                console.error('Analysis failed:', e);
+                document.getElementById('threats').innerHTML = 
+                    `<div class="loading">Error: ${e.message}<br>Make sure Python NCD service is running on port 5000</div>`;
+            } finally {
+                btn.disabled = false;
+                loading.style.display = 'none';
+                btn.textContent = 'Fetch & Analyze';
+            }
+        }
+        
+        function displayThreats(threats, animate = false) {
+            const container = document.getElementById('threats');
+            if (!threats.length) {
+                container.innerHTML = '<div class="loading">No new concepts detected. Click again to fetch more data.</div>';
+                document.getElementById('conceptCount').textContent = '0';
+                return;
+            }
+            
+            container.innerHTML = '';
+            document.getElementById('conceptCount').textContent = threats.length;
+            
+            threats.forEach((t, i) => {
+                const card = document.createElement('div');
+                card.className = 'threat-card';
+                card.style.opacity = '0';
+                card.style.transform = 'translateX(20px)';
+                card.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                card.dataset.conceptId = t.conceptId || '';
+                card.innerHTML = `
+                    <div class="threat-title">${t.label}</div>
+                    <div class="threat-meta">
+                        <span class="threat-strength">Strength: ${(t.strength || 0).toFixed(2)}</span><br>
+                        Docs: ${t.docCount || 0} | Source: ${t.source || 'RSS/CVE'}
+                        ${t.newlySeen ? '<span style="color:#d00;"> ● NEW</span>' : ''}
+                    </div>
+                    <svg class="sparkline" data-concept-id="${escHtml(t.conceptId || '')}" viewBox="0 0 100 28" preserveAspectRatio="none"></svg>
+                `;
+                card.onclick = () => selectThreat(i);
+                container.appendChild(card);
+                
+                // seed per-concept history cache for sparkline
+                if (t.conceptId) {
+                    conceptHistory[t.conceptId] = conceptHistory[t.conceptId] || [];
+                    conceptHistory[t.conceptId].push({ strength: t.strength || 0, periodId: t.period || '' });
+                    renderSparkline(card.querySelector('.sparkline'), conceptHistory[t.conceptId]);
+                }
+                
+                if (animate) {
+                    setTimeout(() => {
+                        card.style.opacity = '1';
+                        card.style.transform = 'translateX(0)';
+                    }, i * 80 + 100);
+                } else {
+                    card.style.opacity = '1';
+                    card.style.transform = 'translateX(0)';
+                }
+            });
+        }
+        
+        // ===== Temporal UI: concept history + sparklines =====
+        const conceptHistory = {};
+        
+        function renderSparkline(svg, events) {
+            if (!svg) return;
+            const w = 100, h = 28, pad = 2;
+            const pts = (events || []).filter(e => e && typeof e.strength === 'number').map(e => e.strength);
+            if (pts.length === 0) {
+                svg.innerHTML = '';
+                return;
+            }
+            const min = Math.min(...pts), max = Math.max(...pts);
+            const range = (max - min) || 1;
+            const coords = pts.map((v, i) => [
+                pad + (i * (w - 2 * pad)) / Math.max(1, pts.length - 1),
+                h - pad - ((v - min) / range) * (h - 2 * pad),
+            ]);
+            const last = coords[coords.length - 1];
+            const line = coords.map((c, i) => (i ? 'L' : 'M') + c[0].toFixed(1) + ',' + c[1].toFixed(1)).join(' ');
+            svg.innerHTML = `<path d="${line}"/><circle class="dot" cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2"/>`;
+        }
+        
+        async function loadConceptHistory(conceptId) {
+            if (!conceptId) return null;
+            try {
+                const resp = await fetch('/api/v1/concepts/' + encodeURIComponent(conceptId) + '/history');
+                if (!resp.ok) return null;
+                const data = await resp.json();
+                const events = (data.history || []).slice().reverse();
+                const spark = events.filter(e => typeof e.strength === 'number').map(e => ({ strength: e.strength, periodId: e.periodId || '' }));
+                conceptHistory[conceptId] = spark;
+                return data;
+            } catch (e) {
+                console.warn('history fetch failed:', e);
+                return null;
+            }
+        }
+        
+        async function selectThreatByBlob(blob) {
+            document.querySelectorAll('.threat-card').forEach(c => c.classList.remove('selected'));
+            document.getElementById('detailSection').style.display = 'block';
+            
+            const sentences = blob.sentences || [];
+            document.getElementById('detailContent').innerHTML = `
+                <div class="sentence-item"><strong>${blob.label}</strong></div>
+                <div class="sentence-item">Position: (${(blob.x * 100).toFixed(1)}%, ${(blob.y * 100).toFixed(1)}%) | Strength: ${(blob.strength || 0).toFixed(3)}</div>
+                ${sentences.map(s => `<div class="sentence-item">${s}</div>`).join('')}
+                ${!sentences.length ? '<div class="sentence-item">No sentences available for this concept.</div>' : ''}
+                <svg class="sparkline" id="detailSparkline" viewBox="0 0 100 28" preserveAspectRatio="none"></svg>
+                <div class="sentence-item" id="historyLabel" style="color:#666;">Loading history...</div>
+            `;
+            
+            const hist = await loadConceptHistory(blob.conceptId);
+            const svgSpark = document.getElementById('detailSparkline');
+            const histLabel = document.getElementById('historyLabel');
+            if (hist && hist.history && hist.history.length) {
+                renderSparkline(svgSpark, conceptHistory[blob.conceptId]);
+                const first = hist.history[0], last = hist.history[hist.history.length - 1];
+                histLabel.textContent = `History: ${hist.history.length} snapshots · first ${first && first.createdAt ? (first.createdAt||'').slice(0,16).replace('T',' ') : '?'} → last ${last && last.createdAt ? (last.createdAt||'').slice(0,16).replace('T',' ') : '?'}`;
+            } else if (hasKey(conceptHistory, blob.conceptId)) {
+                renderSparkline(svgSpark, conceptHistory[blob.conceptId]);
+                histLabel.textContent = `${conceptHistory[blob.conceptId].length} snapshots (current session)`;
+            } else {
+                svgSpark.innerHTML = '';
+                histLabel.textContent = 'No history available for this concept yet.';
+            }
+            
+            render();
+        }
+        
+        function hasKey(obj, k) {
+            return Object.prototype.hasOwnProperty.call(obj, k);
+        }
+        
+        // ===== Real-time SignalR feed =====
+        function appendFeedItem(update) {
+            const feed = document.getElementById('liveFeed');
+            const evt = update.eventType || 'concept_evolved';
+            const alert = update.alert || update.concept || {};
+            const isNew = evt === 'new_concept';
+            const item = document.createElement('div');
+            item.className = 'feed-item' + (isNew ? ' new' : '');
+            item.innerHTML = `
+                <div class="feed-label">${isNew ? '● New concept' : '▲ Concept evolved'}: ${escHtml(alert.summary || alert.label || alert.conceptId || 'unknown')}</div>
+                <div class="feed-meta">Strength: ${(alert.strength || 0).toFixed(3)} | ${alert.source || ''} | ${new Date(alert.detectedAt || Date.now()).toLocaleTimeString()}</div>
+            `;
+            feed.prepend(item);
+            while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+            
+            const badge = document.getElementById('feedBadge');
+            badge.style.display = 'inline-block';
+        }
+        
+        function connectRealtime() {
+            if (typeof signalR === 'undefined') {
+                console.warn('SignalR client script not loaded, real-time updates disabled');
+                return;
+            }
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl('/hubs/threat')
+                .withAutomaticReconnect([0, 2000, 5000, 10000])
+                .build();
+            
+            connection.on('ConceptUpdate', (update) => appendFeedItem(update));
+            connection.on('ThreatAlert', (alert) => appendFeedItem({ eventType: 'new_concept', alert }));
+            connection.on('Connected', (d) => {
+                document.getElementById('status').textContent = 'API: Ready';
+            });
+            
+            connection.start()
+                .then(() => { console.log('SignalR connected'); })
+                .catch((e) => console.warn('SignalR connection failed:', e));
+        }
+        
+        function selectThreat(index) {
+            const blob = blobs[index];
+            if (!blob) return;
+            selectThreatByBlob(blob);
+        }
+        
+        function selectThreatByBlob(blob) {
+            document.querySelectorAll('.threat-card').forEach(c => c.classList.remove('selected'));
+            
+            const sentences = blob.sentences || [];
+            document.getElementById('detailSection').style.display = 'block';
+            document.getElementById('detailContent').innerHTML = `
+                <div class="sentence-item"><strong>${blob.label}</strong></div>
+                <div class="sentence-item">Position: (${(blob.x * 100).toFixed(1)}%, ${(blob.y * 100).toFixed(1)}%) | Strength: ${(blob.strength || 0).toFixed(3)}</div>
+                ${sentences.map(s => `<div class="sentence-item">${s}</div>`).join('')}
+                ${!sentences.length ? '<div class="sentence-item">No sentences available for this concept.</div>' : ''}
+            `;
+            
+            render();
+        }
+        
+        // ===== Health Check =====
+        async function checkHealth() {
+            try {
+                const resp = await fetch('/health');
+                const data = await resp.json();
+                document.getElementById('status').textContent = 'API: Ready';
+                document.getElementById('status').className = 'status';
+            } catch {
+                document.getElementById('status').textContent = 'API Offline';
+                document.getElementById('status').className = 'status pulse';
+            }
+        }
+        
+        // ===== Init =====
+        resize();
+        renderLegend();
+        checkHealth();
+        setInterval(checkHealth, 10000);
+        loadTimeline();
+        connectRealtime();
+    </script>
+</body>
+</html>

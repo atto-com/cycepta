@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package ncd;
+
+service NcdService {
+  rpc DetectConcepts (DetectRequest) returns (DetectResponse);
+  rpc GetEmbeddings (EmbedRequest) returns (EmbedResponse);
+  rpc StreamDetections (StreamRequest) returns (stream ConceptEvent);
+}
+
+message Document {
+  string id = 1;
+  string text = 2;
+  string source = 3;
+  int64 timestamp = 4;
+  map<string, string> metadata = 5;
+}
+
+message DetectRequest {
+  repeated Document documents = 1;
+  string period_id = 2;
+}
+
+message DetectedConcept {
+  string concept_id = 1;
+  string label = 2;
+  string summary = 3;
+  repeated string sentences = 4;
+  int64 first_seen = 5;
+  int64 last_seen = 6;
+  int32 document_count = 7;
+  float strength = 8;
+  repeated float coordinates = 9;
+  string source = 10;
+}
+
+message DetectResponse {
+  string period_id = 1;
+  int32 concepts_found = 2;
+  repeated DetectedConcept concepts = 3;
+  float processing_time_ms = 4;
+  int32 total_documents = 5;
+}
+
+message EmbedRequest {
+  repeated string texts = 1;
+}
+
+message EmbedResponse {
+  repeated bytes embeddings = 1;
+  string model = 2;
+  int32 dimensions = 3;
+}
+
+message StreamRequest {
+  string filter_source = 1;
+}
+
+message ConceptEvent {
+  string event_type = 1;
+  DetectedConcept concept = 2;
+  int64 timestamp = 3;
+}
