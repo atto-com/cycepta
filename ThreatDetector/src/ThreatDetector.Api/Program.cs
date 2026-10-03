@@ -3,6 +3,8 @@ using ThreatDetector.Api.Hubs;
 using ThreatDetector.Api.Services;
 using ThreatDetector.Parsing.Channels;
 using ThreatDetector.Parsing.Feeds;
+using ThreatDetector.Parsing.Feeds.CveFeedParser;
+using ThreatDetector.Parsing.Feeds.CveFeedParser.CveFeedClient;
 using ThreatDetector.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -21,14 +23,17 @@ builder.Services.AddSignalR();
 builder.Services.AddEndpointsApiExplorer();
 
 // HTTP clients with User-Agent
+builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<RssFeedParser>(client =>
 {
     client.DefaultRequestHeaders.Add("User-Agent", "ThreatDetector/1.0 (security research)");
 });
-builder.Services.AddHttpClient<CveFeedParser>(client =>
+
+// NVD CVE feed named client ("ClientCveFeed") with Polly policies
+using (var loggerFactory = LoggerFactory.Create(logging => logging.AddSerilog(Log.Logger)))
 {
-    client.DefaultRequestHeaders.Add("User-Agent", "ThreatDetector/1.0 (security research)");
-});
+    new ClientClass(loggerFactory.CreateLogger<ClientClass>()).HttpclientFeedCve(builder.Services);
+}
 
 // Channel
 builder.Services.AddSingleton<DataIngestionChannel>(sp =>
