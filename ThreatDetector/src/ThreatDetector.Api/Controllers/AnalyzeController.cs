@@ -3,8 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using ThreatDetector.Api.Services;
 using ThreatDetector.Models;
-using ThreatDetector.Parsing.Feeds;
 using ThreatDetector.Parsing.Feeds.CveFeedParser;
+using ThreatDetector.Parsing.Feeds.RssFeedParser;
 
 namespace ThreatDetector.Api.Controllers;
 
@@ -55,9 +55,13 @@ public class AnalyzeController : ControllerBase
         if (source == "all" || source == "nvd")
         {
             _logger.LogInformation("Fetching CVEs from NVD...");
-            var cveDocs = await _cveParser.FetchRecentCvesAsyncParse(lastModDays: 7, ct: HttpContext.RequestAborted);
-            allDocs.AddRange(cveDocs);
-            _logger.LogInformation("Fetched {Count} CVEs from NVD", cveDocs.Count);
+            var cveCount = 0;
+            await foreach (var cveDoc in _cveParser.FetchRecentCvesAsyncParse(lastModDays: 7, ct: HttpContext.RequestAborted))
+            {
+                allDocs.Add(cveDoc);
+                cveCount++;
+            }
+            _logger.LogInformation("Fetched {Count} CVEs from NVD", cveCount);
         }
 
         if (allDocs.Count == 0)
