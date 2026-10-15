@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
@@ -21,10 +22,11 @@ public class CveFeedParser
 
     private static string GiveUrl(DateTime lastStart, DateTime lastEnd, int startIndex)
     {
-        return $"?lastModStartDate={lastStart.ToUniversalTime():yyyy-MM-ddTHH:mm:ss.fff}Z&lastModEndDate={lastEnd.ToUniversalTime():yyyy-MM-ddTHH:mm:ss.fff}Z&startIndex={startIndex}&resultsPerPage={PageSize}";
+        return 
+            $"?lastModStartDate={lastStart.ToUniversalTime():yyyy-MM-ddTHH:mm:ss.fff}Z&lastModEndDate={lastEnd.ToUniversalTime():yyyy-MM-ddTHH:mm:ss.fff}Z&startIndex={startIndex}&resultsPerPage={PageSize}";
     }
 
-    private async Task<List<NvdCve>> FetchRecentCvesAsync(int lastModDays = 1, CancellationToken ct = default)
+    private async IAsyncEnumerable<NvdResponse> FetchRecentCvesAsync(int lastModDays = 1, CancellationToken ct = default)
     {
         using HttpClient httpClient = _httpClientFactory.CreateClient("ClientCveFeed");
         var cves = new List<NvdCve>();
@@ -49,69 +51,52 @@ public class CveFeedParser
 
             startIndex += PageSize;
             _logger.LogDebug("Fetched CVE page {Start}/{Total}", startIndex, totalResults);
-        }
 
-        return cves;
+            yield return response;
+        }
     }
 
-    public async Task<List<ParsedDocument>> FetchRecentCvesAsyncParse(int lastModDays = 1, CancellationToken ct = default)
+    public async IAsyncEnumerable<ParsedDocument> FetchRecentCvesAsyncParse(int lastModDays = 1, CancellationToken ct = default)
     {
-        var documents = new List<ParsedDocument>();
-
-        try
+        using var cts = new CancellationTokenSource();
+        await foreach (var response in FetchRecentCvesAsync(lastModDays, ct).WithCancellation(ct))
         {
-            List<NvdCve> cves = await FetchRecentCvesAsync(lastModDays, ct).ConfigureAwait(false);
+            ConcurrentBag<ParsedDocument> nvdVulnerabilities = new ConcurrentBag<ParsedDocument>();
 
-            foreach (var cve in cves)
+            await Parallel.ForEachAsync(response.Vulnerabilities,
+                new ParallelOptions
             {
-                if (string.IsNullOrEmpty(cve.Id)) continue;
+                MaxDegreeOfParallelism = 10,
+                CancellationToken = cts.Token
+            },
+            async (vuln, token) =>
+            {
+                var cve = vuln.Cve;
+                if (string.IsNullOrEmpty(cve?.Id)) return;
 
-                string id = cve.Id;
-                var desc = cve.Descriptions
-                                .FirstOrDefault(d => string.Equals(d.Lang, "en", StringComparison.OrdinalIgnoreCase))?.Value
-                            ?? cve.Descriptions.FirstOrDefault()?.Value
-                            ?? "";
-                var metric = GetPrimaryMetric(cve);
+                var desc = cve.Descriptions?.FirstOrDefault(d => d.Lang == "en")?.Value ?? "";
 
-                documents.Add(new ParsedDocument
+                nvdVulnerabilities.Add(new ParsedDocument
                 {
-                    Id = id,
-                    Text = $"CVE {id}: {desc}",
+                    Id = cve.Id,
+                    Text = $"CVE {cve.Id}: {desc}",
                     Source = "nvd",
                     Timestamp = cve.Published ?? DateTime.UtcNow,
                     Metadata = new Dictionary<string, string>
                     {
-                        ["cve_id"] = id,
-                        ["severity"] = metric?.CvssData?.BaseSeverity ?? "UNKNOWN",
-                        ["cvss_score"] = metric?.CvssData?.BaseScore?.ToString("0.0", CultureInfo.InvariantCulture) ?? "",
+                        ["cve_id"] = cve.Id,
+                        ["severity"] = cve.Metrics?.Values
+                        .SelectMany(m => m)
+                        .Select(m => m?.CvssData?.BaseSeverity)
+                        .FirstOrDefault(s => !string.IsNullOrEmpty(s)) ?? "Unknow"
                     },
                 });
+            });
+
+            foreach (var doc in nvdVulnerabilities)
+            {
+                yield return doc;
             }
-
-            _logger.LogInformation("Fetched {Count} CVEs from NVD", documents.Count);
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to fetch CVEs from NVD");
-        }
-
-        return documents;
-    }
-
-    private static NvdMetric? GetPrimaryMetric(NvdCve cve)
-    {
-        if (cve.Metrics == null) return null;
-
-        var metrics = cve.Metrics.Values
-            .Where(m => m != null)
-            .SelectMany(m => m)
-            .ToList();
-
-        return metrics.FirstOrDefault(m => string.Equals(m.Type, "Primary", StringComparison.OrdinalIgnoreCase))
-            ?? metrics.FirstOrDefault();
     }
 }

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Text;
+using Microsoft.Extensions.Http.Resilience;
 
 namespace ThreatDetector.Parsing.Feeds.CveFeedParser.CveFeedClient
 {
@@ -29,40 +30,69 @@ namespace ThreatDetector.Parsing.Feeds.CveFeedParser.CveFeedClient
 
                     client.BaseAddress = new Uri("https://services.nvd.nist.gov/rest/json/cves/2.0");
 
+                    client.Timeout = Timeout.InfiniteTimeSpan;
+
                     client.DefaultRequestVersion = HttpVersion.Version20;
                     client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher;
                 });
-                clienthttp.AddPolicyHandler(Policy.TimeoutAsync<HttpResponseMessage>(
-                    TimeSpan.FromMinutes(1),
-                    Polly.Timeout.TimeoutStrategy.Pessimistic,
-                    onTimeoutAsync: async (context, timespan, task) =>
-                    {
-                        _logger.LogWarning($"⏰ Request timed out after {timespan} from Client_1" + DateTime.UtcNow);
-                        await Task.CompletedTask;
-                    }));
-                clienthttp.AddTransientHttpErrorPolicy(policy => policy.CircuitBreakerAsync(
-                    handledEventsAllowedBeforeBreaking: 5,
-                    durationOfBreak: TimeSpan.FromMinutes(1),
-                    onBreak: (outco,timespan) =>
-                    {
-                        _logger.LogWarning($"Cистема CircuitBreaker: circuit opened for {timespan}");
-                    },
-                    onHalfOpen: () =>
-                    {
-                        _logger.LogWarning("Cистема CircuitBreaker: half-open");
-                    },
-                    onReset: ()=>
-                    {
-                        _logger.LogWarning("Cистема CircuitBreaker: circuit reset");
-                    }));
-                clienthttp.AddTransientHttpErrorPolicy(polly => polly.WaitAndRetryAsync(3, retrycount =>
-                TimeSpan.FromSeconds(Math.Pow(2, retrycount)) +
-                TimeSpan.FromMilliseconds(Random.Shared.Next(0, 100)),
-                onRetryAsync: (outcome, timespan, retrycount, task) =>
+                //clienthttp.AddPolicyHandler(Policy.TimeoutAsync<HttpResponseMessage>(
+                //    TimeSpan.FromMinutes(1),
+                //    Polly.Timeout.TimeoutStrategy.Pessimistic,
+                //    onTimeoutAsync: async (context, timespan, task) =>
+                //    {
+                //        _logger.LogWarning($"⏰ Request timed out after {timespan} from Client_1" + DateTime.UtcNow);
+                //        await Task.CompletedTask;
+                //    }));
+                //clienthttp.AddTransientHttpErrorPolicy(policy => policy.CircuitBreakerAsync(
+                //    handledEventsAllowedBeforeBreaking: 5,
+                //    durationOfBreak: TimeSpan.FromMinutes(1),
+                //    onBreak: (outco,timespan) =>
+                //    {
+                //        _logger.LogWarning($"Cистема CircuitBreaker: circuit opened for {timespan}");
+                //    },
+                //    onHalfOpen: () =>
+                //    {
+                //        _logger.LogWarning("Cистема CircuitBreaker: half-open");
+                //    },
+                //    onReset: ()=>
+                //    {
+                //        _logger.LogWarning("Cистема CircuitBreaker: circuit reset");
+                //    }));
+                //clienthttp.AddTransientHttpErrorPolicy(polly => polly.WaitAndRetryAsync(3, retrycount =>
+                //TimeSpan.FromSeconds(Math.Pow(2, retrycount)) +
+                //TimeSpan.FromMilliseconds(Random.Shared.Next(0, 100)),
+                //onRetryAsync: (outcome, timespan, retrycount, task) =>
+                //{
+                //    _logger.LogWarning($"Повтор запроса #{retrycount} через {timespan}");
+                //    return Task.CompletedTask;
+                //}));
+                clienthttp.AddResilienceHandler("builderCve", builder =>
                 {
-                    _logger.LogWarning($"Повтор запроса #{retrycount} через {timespan}");
-                    return Task.CompletedTask;
-                }));
+                    builder.AddTimeout(new HttpTimeoutStrategyOptions
+                    {
+                        Timeout = TimeSpan.FromMinutes(5),
+                        OnTimeout = args =>
+                        {
+                            _logger.LogWarning($"⏰ Таймаут: {args.Timeout}");
+                            return ValueTask.CompletedTask;
+                        }
+                    });
+
+                    builder.AddRetry(new HttpRetryStrategyOptions
+                    {
+                        MaxRetryAttempts = 5,
+                        BackoffType = DelayBackoffType.Exponential,
+                        Delay = TimeSpan.FromSeconds(5),
+                        MaxDelay = TimeSpan.FromSeconds(30),
+                        UseJitter = true,
+                        OnRetry = args =>
+                        {
+                            _logger.LogWarning($"🔁 Попытка #{args.AttemptNumber} через {args.RetryDelay}. " +
+                                        $"Причина: {args.Outcome.Exception?.Message ?? args.Outcome.Result?.StatusCode.ToString()}");
+                            return ValueTask.CompletedTask;
+                        }
+                    });
+                });
                 clienthttp.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler()
                 {
                     EnableMultipleHttp2Connections = true,

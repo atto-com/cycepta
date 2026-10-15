@@ -1,7 +1,10 @@
+using Microsoft.Extensions.Logging;
+using System.Collections;
+using System.Collections.Concurrent;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Xml;
 using System.Xml.Linq;
-using Microsoft.Extensions.Logging;
 using ThreatDetector.Models;
 using ThreatDetector.Parsing.Feeds.RssFeedParser.RssFeedClient;
 
@@ -28,22 +31,40 @@ public class RssFeedParser
         _httpClientFactory = httpClientFactory;
     }
 
-    public async Task<List<ParsedDocument>> ParseFeedAsync(string feedUrl, CancellationToken ct = default)
+    public async Task<string> ParseFeedAsyncRequest(string feedUrl, CancellationToken ct = default)
     {
         var documents = new List<ParsedDocument>();
+        using var cts = new CancellationTokenSource();
         try
         {
             using var client = _httpClientFactory.CreateClient(RssClientClass.HttpClientName);
             var response = await client.GetStringAsync(feedUrl, ct).ConfigureAwait(false);
 
             if (response == null)
-                return new List<ParsedDocument>();
+                return string.Empty;
 
-            var host = Uri.TryCreate(feedUrl, UriKind.Absolute, out var uri) 
-                ? uri.Host
-                : string.Empty;
+            //var host = Uri.TryCreate(feedUrl, UriKind.Absolute, out var uri) 
+            //    ? uri.Host
+            //    : string.Empty;
 
-            var source = $"rss:{host}";
+            //var source = $"rss:{host}";
+            return response;
+        }
+        catch (OperationCanceledException ex)
+        {
+            _logger.LogWarning(ex, "Operation canceled while parsing RSS feed {Feed}", feedUrl);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse RSS feed {Feed}", feedUrl);
+            throw;
+        }
+    }
+
+    public async IAsyncEnumerable<ParsedDocument> ParseFeedAsync(string feedUrl, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+            using var cts = new CancellationTokenSource();
 
             // настройка ридера для игнорирования DTD и отключения XmlResolver для безопасности
             var settings = new XmlReaderSettings
@@ -51,23 +72,31 @@ public class RssFeedParser
                 DtdProcessing = DtdProcessing.Ignore,
                 XmlResolver = null
             };
+
+            var response = await ParseFeedAsyncRequest(feedUrl, ct).ConfigureAwait(false);
+
+            ConcurrentBag<ParsedDocument> parsedDocuments = new ConcurrentBag<ParsedDocument>();
             using var reader = XmlReader.Create(new StringReader(response), settings);
             var doc = XDocument.Load(reader);
 
             var items = doc.Descendants("item");
-            foreach (var item in items)
+            await Parallel.ForEachAsync(items, new ParallelOptions
+            {
+                MaxDegreeOfParallelism = 10,
+                CancellationToken = ct
+            },
+            async (item, itemCt) =>
             {
                 var title = item.Element("title")?.Value ?? "";
                 var description = item.Element("description")?.Value ?? "";
                 var link = item.Element("link")?.Value ?? "";
                 var pubDate = item.Element("pubDate")?.Value ?? "";
 
-                // Strip HTML tags from description
                 var cleanDesc = _htmlRegex.Replace(description, "");
 
                 if (!string.IsNullOrWhiteSpace(title) || !string.IsNullOrWhiteSpace(cleanDesc))
                 {
-                    documents.Add(new ParsedDocument
+                    parsedDocuments.Add(new ParsedDocument
                     {
                         Text = $"{title}. {cleanDesc}".Trim(),
                         Source = $"rss:{new Uri(feedUrl).Host}",
@@ -81,36 +110,47 @@ public class RssFeedParser
                         },
                     });
                 }
+            });
+
+            foreach (var docs in parsedDocuments)
+            {
+                yield return docs;
             }
-
-            _logger.LogDebug("Parsed {Count} items from {Feed}", documents.Count, feedUrl);
-        }
-        catch (OperationCanceledException ex)
-        {
-            _logger.LogWarning(ex, "Operation canceled while parsing RSS feed {Feed}", feedUrl);
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to parse RSS feed {Feed}", feedUrl);
-            throw;
-        }
-
-        return documents;
     }
+
 
     public async Task<List<ParsedDocument>> ParseAllFeedsAsync(CancellationToken ct = default)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(25));
 
-        var tasks = SecurityFeeds.Select(feed => ParseFeedAsync(feed, timeoutCts.Token));
+        var tasks = SecurityFeeds.Select(async feed =>
+        {
+            var list = new List<ParsedDocument>();
+            try
+            {
+                await foreach (var doc in ParseFeedAsync(feed, timeoutCts.Token).WithCancellation(timeoutCts.Token))
+                {
+                    list.Add(doc);
+                }
+            }
+            catch (OperationCanceledException ex)
+            {
+                _logger.LogWarning(ex, "Фид {Feed} отменён", feed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex.Message, "Фид {Feed} отменён", feed);
+            }
+
+            return list;
+        });
         var results = await Task.WhenAll(tasks);
 
         var allDocs = new List<ParsedDocument>();
         foreach (var docs in results)
         {
-            allDocs.AddRange(docs);
+            allDocs.AddRange(docs); 
         }
 
         return allDocs;
