@@ -2,7 +2,10 @@ using Serilog;
 using ThreatDetector.Api.Hubs;
 using ThreatDetector.Api.Services;
 using ThreatDetector.Parsing.Channels;
-using ThreatDetector.Parsing.Feeds;
+using ThreatDetector.Parsing.Feeds.CveFeedParser;
+using ThreatDetector.Parsing.Feeds.CveFeedParser.CveFeedClient;
+using ThreatDetector.Parsing.Feeds.RssFeedParser;
+using ThreatDetector.Parsing.Feeds.RssFeedParser.RssFeedClient;
 using ThreatDetector.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -21,14 +24,25 @@ builder.Services.AddSignalR();
 builder.Services.AddEndpointsApiExplorer();
 
 // HTTP clients with User-Agent
-builder.Services.AddHttpClient<RssFeedParser>(client =>
+builder.Services.AddHttpClient();
+
+// RSS feed named client ("ClientRssFeed") with Polly policies.
+// RssFeedParser resolves it through IHttpClientFactory, so these headers/policies apply.
+using (var loggerFactory = LoggerFactory.Create(logging => logging.AddSerilog(Log.Logger)))
 {
-    client.DefaultRequestHeaders.Add("User-Agent", "ThreatDetector/1.0 (security research)");
-});
-builder.Services.AddHttpClient<CveFeedParser>(client =>
+    var rssLogger = loggerFactory.CreateLogger<RssClientClass>();
+    new RssClientClass(rssLogger).HttpclientFeedRss(builder.Services);
+}
+
+// NVD CVE feed named client ("ClientCveFeed") with Polly policies
+using (var loggerFactory = LoggerFactory.Create(logging => logging.AddSerilog(Log.Logger)))
 {
-    client.DefaultRequestHeaders.Add("User-Agent", "ThreatDetector/1.0 (security research)");
-});
+    new ClientClass(loggerFactory.CreateLogger<ClientClass>()).HttpclientFeedCve(builder.Services);
+}
+
+// Feed parsers (consumed by AnalyzeController)
+builder.Services.AddSingleton<RssFeedParser>();
+builder.Services.AddSingleton<CveFeedParser>();
 
 // Channel
 builder.Services.AddSingleton<DataIngestionChannel>(sp =>
