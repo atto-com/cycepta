@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ThreatDetector.Parsing", "s
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ThreatDetector.Storage", "src\ThreatDetector.Storage\ThreatDetector.Storage.csproj", "{E5F6A7B8-C9D0-1234-EFAB-345678901234}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ThreatDetector.Tests", "tests\ThreatDetector.Tests\ThreatDetector.Tests.csproj", "{5B0A9E24-0275-4041-B857-162A06FE7C62}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,5 +35,9 @@ Global
 		{E5F6A7B8-C9D0-1234-EFAB-345678901234}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E5F6A7B8-C9D0-1234-EFAB-345678901234}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E5F6A7B8-C9D0-1234-EFAB-345678901234}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5B0A9E24-0275-4041-B857-162A06FE7C62}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5B0A9E24-0275-4041-B857-162A06FE7C62}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5B0A9E24-0275-4041-B857-162A06FE7C62}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5B0A9E24-0275-4041-B857-162A06FE7C62}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

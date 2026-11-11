@@ -5,7 +5,7 @@ public class ParsedDocument
     public string Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
     public string Text { get; set; } = string.Empty;
     public string Source { get; set; } = "unknown";
-    public DateTime? Timestamp { get; set; } = DateTime.UtcNow;
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public Dictionary<string, string> Metadata { get; set; } = new();
 }
 
@@ -27,6 +27,8 @@ public class DetectedConcept
     public double Strength { get; set; } = 0.0;
     public List<double> Coordinates { get; set; } = new();
     public string Source { get; set; } = string.Empty;
+    public bool Emerging { get; set; } = false;
+    public List<string> DocumentIds { get; set; } = new();
 }
 
 public class DetectionResult
@@ -69,12 +71,23 @@ public class ThreatAlert
     public double Strength { get; set; }
     public DateTime DetectedAt { get; set; } = DateTime.UtcNow;
     public string Source { get; set; } = string.Empty;
+    public bool Emerging { get; set; } = false;
 }
 
 public class ConceptUpdate
 {
     public string EventType { get; set; } = string.Empty; // new_concept, concept_evolved
     public ThreatAlert Alert { get; set; } = new();
+}
+
+public class AnalysisProgress
+{
+    public string Stage { get; set; } = string.Empty; // fetching, analyzing, done
+    public string Message { get; set; } = string.Empty;
+    public int Current { get; set; }
+    public int Total { get; set; }
+    public int Concepts { get; set; }
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 }
 
 public class DashboardMetrics

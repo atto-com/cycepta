@@ -7,7 +7,7 @@ namespace ThreatDetector.Api.Services;
 
 /// <summary>
 /// Shared persistence + real-time push for detected concepts.
-/// Used by both the interactive AnalyzeController and the background BatchingService.
+/// Used by the interactive AnalyzeController.
 /// </summary>
 public class ConceptPersistenceService
 {
@@ -47,7 +47,7 @@ public class ConceptPersistenceService
             {
                 await _storage.SaveConceptAsync(concept);
                 var eventType = knownIds.Contains(concept.ConceptId) ? "concept_evolved" : "new_concept";
-                await _storage.SaveConceptEventAsync(concept, eventType);
+                await _storage.SaveConceptEventAsync(concept, eventType, result?.PeriodId);
 
                 var update = new ConceptUpdate
                 {
@@ -60,10 +60,32 @@ public class ConceptPersistenceService
                         Strength = concept.Strength,
                         DetectedAt = DateTime.UtcNow,
                         Source = concept.Source,
+                        Emerging = concept.Emerging,
                     },
                 };
                 await _hub.Clients.All.SendAsync("ConceptUpdate", update);
             }
+
+            // Member-document source links: Accumulate across periods, so a
+            // concept keeps its provenance from the period that actually held
+            // the source document. Cap guards pathological batch sizes.
+            var docIndex = docs
+                .GroupBy(d => d.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            var linkRows = new List<ConceptDocumentRow>();
+            foreach (var concept in concepts)
+            {
+                foreach (var docId in concept.DocumentIds.Take(50))
+                {
+                    if (!docIndex.TryGetValue(docId, out var doc)) continue;
+                    var url = doc.Metadata.TryGetValue("url", out var u) ? u : "";
+                    var source = doc.Source is { Length: > 0 } s
+                        ? s
+                        : (doc.Metadata.TryGetValue("feed", out var feed) ? feed : "");
+                    linkRows.Add(new ConceptDocumentRow(concept.ConceptId, doc.Id, url, source));
+                }
+            }
+            await _storage.SaveConceptDocumentsAsync(linkRows);
 
             _logger.LogInformation("Persisted {DocCount} documents and {ConceptCount} concepts", docs.Count, concepts.Count);
         }

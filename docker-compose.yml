@@ -1,25 +1,61 @@
+name: cycepta
+
 services:
-  concepta:
+  cycepta:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: concepta
+    image: cycepta:latest
+    container_name: cycepta
     ports:
-      # NCD (Python) — снаружи 5000, внутри 8080
-      - "5000:8080"
-      # ThreatDetector API (.NET)
-      - "5001:5001"
+      # Local-only by default. Bind 0.0.0.0 explicitly when deploying behind
+      # a reverse proxy/firewall.
+      - "127.0.0.1:5000:8080"
+      - "127.0.0.1:5001:5001"
     environment:
       - NCD_DEVICE=cpu
       - NUMBA_NUM_THREADS=1
       - NCD_CLUSTER_MODE=${NCD_CLUSTER_MODE:-blob}
-      - NCD_USE_DIFF=${NCD_USE_DIFF:-0}
-      - NCD_UMAP_REFIT_INTERVAL=${NCD_UMAP_REFIT_INTERVAL:-5}
-      - NcdService__Url=http://localhost:8080
+      - NCD_USE_DIFF=${NCD_USE_DIFF:-1}
+      - NCD_UMAP_REFIT_INTERVAL=${NCD_UMAP_REFIT_INTERVAL:-0}
+      - NCD_UMAP_RANDOM_STATE=${NCD_UMAP_RANDOM_STATE:-42}
+      - NCD_UMAP_N_JOBS=${NCD_UMAP_N_JOBS:-1}
+      - NCD_JUDGE=${NCD_JUDGE:-1}
+      - NcdService__Url=http://127.0.0.1:8080
       - THREAT_DB_PATH=/data/threats.db
+      # Optional hardening knobs (see env.example). Empty key = local-only mode.
+      - THREAT_INGEST_KEY=${THREAT_INGEST_KEY:-}
+      - THREAT_ALLOW_PRIVATE_FEEDS=${THREAT_ALLOW_PRIVATE_FEEDS:-0}
+      - NCD_ALLOW_CUSTOM_LLM_ENDPOINT=${NCD_ALLOW_CUSTOM_LLM_ENDPOINT:-0}
+      # API report providers read their key from the environment. Empty
+      # values keep local-only mode; set them in .env or the shell.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
       - threatdb:/data
+      # Embedding weights survive container recreation.
+      - ncdmodels:/home/app/.ncd/models
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      # Both processes must be alive: the .NET health endpoint does not probe
+      # NCD, so check the engine directly as well.
+      test:
+        - CMD-SHELL
+        - curl -fsS http://127.0.0.1:5001/health >/dev/null && curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1800s
 
 volumes:
   threatdb:
+    name: cycepta-data
+  ncdmodels:
+    name: cycepta-models

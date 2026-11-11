@@ -3,44 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Emerging Threat Detector</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <title>Cycepta — Emerging Threat Detector</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', system-ui, sans-serif; background: #ffffff; color: #111111; overflow: hidden; }
         
         .header { background: #ffffff; padding: 12px 24px; border-bottom: 2px solid #000000; display: flex; justify-content: space-between; align-items: center; }
+        .header .brand { display: flex; align-items: center; gap: 10px; }
+        .header .brand-logo { width: 32px; height: 32px; object-fit: contain; flex: 0 0 auto; }
         .header h1 { font-size: 18px; color: #000000; }
+        .header h1 .header-subtitle { margin-left: 8px; font-size: 12px; font-weight: 400; opacity: 0.65; }
         .header .status { color: #000000; font-size: 12px; }
         
-        .container { display: grid; grid-template-columns: 240px 1fr 300px; height: calc(100vh - 50px); }
+        .container { display: grid; grid-template-columns: 1fr 300px; height: calc(100vh - 50px); position: relative; transition: grid-template-columns 0.2s ease; }
+        .container.right-collapsed { grid-template-columns: 1fr 0; }
+        :root { --sidebar-width: 160px; --sidebar-inset: 8px; }
+        .container.left-collapsed .sidebar { display: none; }
+        .container.right-collapsed .right-panel { padding: 0; border-left: none; overflow: hidden; }
+        .panel-toggle { position: absolute; top: 50%; transform: translateY(-50%); width: 18px; height: 44px; background: #ffffff; border: 1px solid #000000; border-radius: 4px; cursor: pointer; z-index: 40; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #666666; padding: 0; }
+        .panel-toggle:hover { background: #f0f0f0; color: #000000; }
+        .panel-toggle.left { left: calc(var(--sidebar-inset) + var(--sidebar-width) + 8px); border-radius: 0 4px 4px 0; }
+        .panel-toggle.right { right: 0; border-radius: 4px 0 0 4px; }
+        .mini-fetch { display: none; }
+        .container.left-collapsed .mini-fetch { display: inline-block; }
+        .container.left-collapsed .panel-toggle.left { left: 0; }
         
-        .sidebar { background: #ffffff; padding: 16px; border-right: 1px solid #000000; overflow-y: auto; }
-        .sidebar h2 { color: #000000; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+        .sidebar { position: absolute; left: var(--sidebar-inset); top: 50%; transform: translateY(-50%); width: var(--sidebar-width); padding: 10px; z-index: 30; background: #ffffff; border: 1px solid #000000; border-radius: 8px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12); }
+        .sidebar .btn { font-size: 11px; padding: 7px 10px; }
         
-        .source-item { display: flex; align-items: center; gap: 8px; padding: 8px; background: #f7f7f7; border: 1px solid #cccccc; border-radius: 6px; margin-bottom: 6px; font-size: 12px; }
-        .source-dot { width: 8px; height: 8px; border-radius: 50%; background: #000000; }
-        
-        .btn { background: #000000; color: #ffffff; border: 1px solid #000000; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; width: 100%; margin-top: 8px; }
-        .btn:hover { background: #333333; }
+        /* Semantic stage palette: board=blue, ingest/sim=purple, reports=green.
+           The single alarm accent (EMERGING, #d00) stays untouched. */
+        :root {
+            --stage-graph: #2563eb;
+            --stage-sim: #7c3aed;
+            --stage-report: #059669;
+        }
+
+        .btn { background: var(--stage-sim); color: #ffffff; border: 1px solid var(--stage-sim); padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; width: 100%; margin-top: 8px; }
+        .btn:hover { background: #6d28d9; border-color: #6d28d9; }
         .btn:disabled { background: #cccccc; border-color: #cccccc; cursor: not-allowed; }
-        .btn-secondary { background: #ffffff; color: #000000; }
+        .btn-secondary { background: #ffffff; color: #000000; border-color: #000000; }
         .btn-secondary:hover { background: #f0f0f0; }
+        .btn-report { color: var(--stage-report); border-color: var(--stage-report); }
+        .btn-report:hover { background: #ecfdf5; }
         
         .center { position: relative; background: #ffffff; overflow: hidden; }
         #heatmapCanvas { width: 100%; height: 100%; display: block; }
         
-        .heatmap-overlay { position: absolute; top: 12px; left: 12px; background: rgba(255, 255, 255, 0.92); padding: 10px 14px; border-radius: 8px; font-size: 11px; border: 1px solid #000000; }
-        .heatmap-overlay .title { color: #000000; font-weight: 600; margin-bottom: 4px; }
+        .heatmap-overlay { position: absolute; top: 12px; left: 12px; background: rgba(255, 255, 255, 0.92); padding: 10px 14px; border-radius: 8px; font-size: 11px; border: 1px solid var(--stage-graph); }
+        .heatmap-overlay .title { color: var(--stage-graph); font-weight: 600; margin-bottom: 4px; }
         
-        .legend { position: absolute; bottom: 12px; left: 12px; background: rgba(255, 255, 255, 0.92); padding: 10px; border-radius: 8px; border: 1px solid #000000; }
+        .legend { position: absolute; bottom: 44px; left: 12px; background: rgba(255, 255, 255, 0.92); padding: 10px; border-radius: 8px; border: 1px solid var(--stage-graph); }
         .legend canvas { border-radius: 4px; }
         .legend .labels { display: flex; justify-content: space-between; font-size: 10px; color: #666666; margin-top: 4px; }
         
         .controls { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
         .control-btn { background: rgba(255, 255, 255, 0.92); border: 1px solid #000000; color: #000000; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
         .control-btn:hover { border-color: #000000; background: #f0f0f0; }
-        .control-btn.active { background: #000000; border-color: #000000; color: #ffffff; }
-        .zoom-controls { display: flex; gap: 4px; align-items: center; background: rgba(255, 255, 255, 0.92); border: 1px solid #000000; border-radius: 4px; padding: 2px; }
+        .control-btn.active { background: var(--stage-graph); border-color: var(--stage-graph); color: #ffffff; }
+        .zoom-controls { display: flex; gap: 4px; align-items: center; background: rgba(255, 255, 255, 0.92); border: 1px solid var(--stage-graph); border-radius: 4px; padding: 2px; }
         .zoom-controls .control-btn { border: none; background: transparent; padding: 4px 8px; }
         .zoom-controls .control-btn:hover { background: #eeeeee; }
         .zoom-level { color: #666666; font-size: 10px; min-width: 36px; text-align: center; }
@@ -51,87 +73,209 @@
         .concept-tooltip .sentence { background: #f7f7f7; border: 1px solid #dddddd; border-radius: 4px; padding: 6px 8px; margin-bottom: 4px; font-size: 10px; color: #333333; line-height: 1.4; border-left: 2px solid #000000; }
         .concept-tooltip .more { color: #000000; font-size: 10px; margin-top: 4px; }
         
-        .right-panel { background: #ffffff; padding: 16px; border-left: 1px solid #000000; overflow-y: auto; }
-        .right-panel h2 { color: #000000; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+        .right-panel { --panel-pad: 16px; background: #ffffff; padding: var(--panel-pad); border-left: 1px solid #000000; overflow-y: auto; }
         
         .threat-card { background: #f7f7f7; border: 1px solid #000000; border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; font-size: 12px; }
         .threat-card:hover { border-color: #000000; background: #eeeeee; }
-        .threat-card.selected { border-color: #000000; border-width: 2px; box-shadow: 0 0 12px rgba(0, 0, 0, 0.3); }
+        .threat-card.selected { border-color: var(--stage-graph); border-width: 2px; box-shadow: 0 0 12px rgba(37, 99, 235, 0.35); }
         .threat-title { font-weight: 600; margin-bottom: 4px; }
         .threat-meta { color: #666666; font-size: 11px; }
         .threat-strength { color: #000000; }
         
-        .detail-section { margin-top: 12px; }
-        .detail-section h3 { color: #000000; font-size: 12px; margin-bottom: 8px; }
-        .sentence-item { background: #f7f7f7; border: 1px solid #dddddd; border-radius: 4px; padding: 8px; margin-bottom: 6px; font-size: 11px; color: #333333; line-height: 1.4; border-left: 2px solid #000000; }
+        .sentence-item { background: #f7f7f7; border: 1px solid #dddddd; border-radius: 4px; padding: 8px; margin-bottom: 6px; font-size: 11px; color: #333333; line-height: 1.4; border-left: 2px solid var(--stage-report); }
+        .threat-inline-detail { background: #f7f7f7; border: 1px solid #dddddd; border-left: 2px solid var(--stage-report); border-radius: 8px; padding: 8px 10px; margin: 2px 0 10px 6px; font-size: 12px; color: #333333; }
 
         .feed-section { margin-top: 16px; border-top: 1px solid #000000; padding-top: 12px; }
-        .feed-section h3 { color: #000000; font-size: 12px; margin-bottom: 8px; }
-        .feed-badge { background: #000000; color: #ffffff; font-size: 9px; border-radius: 8px; padding: 2px 6px; margin-left: 4px; }
-        .feed-item { background: #f7f7f7; border: 1px solid #dddddd; border-left: 3px solid #000000; border-radius: 4px; padding: 6px 8px; margin-bottom: 6px; font-size: 11px; }
+        .feed-badge { background: var(--stage-sim); color: #ffffff; font-size: 9px; border-radius: 8px; padding: 2px 6px; margin-left: 4px; }
+        .feed-item { background: #f7f7f7; border: 1px solid #dddddd; border-left: 3px solid var(--stage-sim); border-radius: 4px; padding: 6px 8px; margin-bottom: 6px; font-size: 11px; cursor: pointer; }
         .feed-item .feed-label { font-weight: 600; color: #000000; }
         .feed-item .feed-meta { color: #666666; font-size: 10px; margin-top: 2px; }
         .feed-item.new { border-left-color: #d00; }
 
+        .panel-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; background: #ffffff; margin: calc(-1 * var(--panel-pad)) calc(-1 * var(--panel-pad)) 12px; padding: 10px var(--panel-pad); border-bottom: 1px solid #cccccc; }
+        .toast { position: fixed; bottom: 64px; left: 50%; transform: translateX(-50%); background: #000000; color: #ffffff; padding: 8px 14px; border-radius: 6px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; z-index: 400; }
+        .toast.show { opacity: 1; }
+
+        /* Emerging-concept accent (single strong accent on the monochrome design) */
+        .badge-emerging { display: inline-block; background: #d00; color: #ffffff; font-size: 9px; font-weight: 700; border-radius: 8px; padding: 2px 6px; margin-left: 4px; letter-spacing: 1px; }
+        .threat-card.emerging { border-color: #d00; }
+        .threat-card.emerging:hover { border-color: #d00; background: #fdf1f1; }
+        .feed-item.emerging { border-left-color: #d00; background: #fdf1f1; }
+        .feed-emerging-tag { background: #d00; color: #ffffff; font-size: 9px; font-weight: 700; border-radius: 8px; padding: 2px 6px; margin-left: 4px; letter-spacing: 1px; }
+        .tooltip-emerging { color: #d00; font-weight: 700; }
+
         .sparkline { width: 100%; height: 28px; margin-top: 6px; display: block; }
         .sparkline path { fill: none; stroke: #000000; stroke-width: 1.5; }
-        .sparkline .dot { fill: #d00; }
+        .sparkline .dot { fill: var(--stage-report); }
+        /* Right-panel concepts list: centered empty state, cards stack naturally */
+        #threats { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; overflow-y: auto; }
+        .loading-empty { text-align: center; color: #666666; font-size: 12px; font-style: italic; padding: 30px 20px; }
+
         
         .summary-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 300; }
         .summary-modal.active { display: flex; }
-        .summary-content { background: #ffffff; border: 1px solid #000000; border-radius: 12px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; }
-        .summary-content h2 { color: #000000; margin-bottom: 16px; font-size: 16px; }
+        .summary-content { background: #ffffff; border: 1px solid #000000; border-top: 3px solid var(--stage-report); border-radius: 12px; padding: 24px; max-width: 760px; width: 90%; max-height: 80vh; overflow-y: auto; }
+        .summary-content h2 { color: var(--stage-report); margin-bottom: 16px; font-size: 16px; }
         .summary-card { background: #f7f7f7; border: 1px solid #dddddd; border-radius: 8px; padding: 14px; margin-bottom: 12px; }
         .summary-card .label { color: #000000; font-weight: 600; margin-bottom: 6px; }
         .summary-card .text { color: #333333; font-size: 12px; line-height: 1.5; }
         .summary-card .stats { color: #666666; font-size: 10px; margin-top: 8px; }
+        .summary-card .report h1 { color: #000000; font-size: 20px; line-height: 1.25; margin: 0 0 12px; }
+        .summary-card .report h2 { color: #000000; font-size: 14px; line-height: 1.3; margin: 16px 0 8px; }
+        .summary-card .report p { margin: 6px 0; }
+        .summary-card .report ol { margin: 8px 0 8px 20px; padding: 0; }
+        .summary-card .report li { margin: 8px 0; }
+        .summary-card .report hr { border: 0; border-top: 1px solid #dddddd; margin: 14px 0; }
+        .summary-card .report table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+        .summary-card .report th, .summary-card .report td { border: 1px solid #dddddd; padding: 5px 7px; text-align: left; font-size: 11px; }
+        .summary-card .report th { background: #eeeeee; font-weight: 600; }
+        body.dark .summary-card .report h1, body.dark .summary-card .report h2 { color: #f0f0f0; }
+        body.dark .summary-card .report h2, body.dark .summary-card .report hr { border-top-color: #333333; }
+        body.dark .summary-card .report th, body.dark .summary-card .report td { border-color: #333333; }
+        body.dark .summary-card .report th { background: #2a2a2a; }
         .close-btn { background: #000000; color: #ffffff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-top: 12px; }
+        .llm-chooser .llm-radio { display: block; margin-bottom: 10px; font-size: 12px; color: #333333; cursor: pointer; }
+        .llm-chooser .llm-field { display: block; width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 12px; border: 1px solid #cccccc; border-radius: 4px; font-size: 12px; background: #ffffff; color: #000000; }
+        .llm-chooser .llm-meta { color: #666666; font-size: 10px; line-height: 1.4; margin: -6px 0 12px; }
+        body.dark .llm-chooser .llm-radio { color: #cccccc; }
+        body.dark .llm-chooser .llm-field { background: #1a1a1a; border-color: #444444; color: #e8e8e8; }
+        body.dark .llm-chooser .llm-meta { color: #999999; }
         
         .stats-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #ffffff; padding: 6px 24px; border-top: 1px solid #000000; display: flex; gap: 24px; font-size: 11px; color: #666666; z-index: 50; }
         .stats-bar .value { color: #000000; font-weight: 600; }
 
-        .timeline { position: absolute; left: 12px; right: 12px; bottom: 14px; background: rgba(255,255,255,0.95); border: 1px solid #000000; border-radius: 10px; padding: 8px 12px; z-index: 60; box-shadow: 0 4px 24px rgba(0,0,0,0.12); }
-        .timeline-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-        .timeline-controls .tl-play { background: #000000; color: #ffffff; border: none; border-radius: 50%; width: 26px; height: 26px; cursor: pointer; font-size: 12px; line-height: 1; }
-        .timeline-controls .tl-play.playing::before { content: '||'; font-size: 10px; }
-        .timeline-label { font-size: 11px; color: #000; font-weight: 600; white-space: nowrap; }
-        .timeline-label .span { font-weight: 400; color: #666; }
-        .timeline-track { position: relative; height: 34px; display: flex; align-items: center; gap: 2px; cursor: pointer; }
-        .timeline-cell { flex: 1; height: 22px; background: #b7e98a; border-radius: 3px; position: relative; min-width: 3px; }
-        .timeline-cell:hover { outline: 2px solid #000; }
-        .timeline-cell.active { outline: 2px solid #d00; z-index: 2; }
-        .timeline-legend { display: flex; gap: 12px; font-size: 9px; color: #666; margin-top: 4px; align-items: center; }
-        
         .loading-text { color: #000000; font-size: 12px; animation: pulse-text 1.5s ease-in-out infinite; }
+        .analysis-progress { display: none; position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 200; max-width: 460px; padding: 6px 12px; background: rgba(255, 255, 255, 0.94); border: 1px solid #dddddd; border-radius: 8px; text-align: center; }
+        .loading-hint { color: #666666; font-size: 10px; margin-top: 2px; animation: none; }
+        body.dark .analysis-progress { background: rgba(17, 17, 17, 0.94); border-color: #444444; }
+        body.dark .loading-hint { color: #999999; }
         @keyframes pulse-text { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+
+        /* Minimap: small corner map of the concept board with the live viewport */
+        .minimap { position: absolute; right: 12px; bottom: 44px; background: rgba(255, 255, 255, 0.95); border: 1px solid var(--stage-graph); border-radius: 8px; padding: 4px; z-index: 40; box-shadow: 0 4px 24px rgba(0,0,0,0.12); cursor: crosshair; }
+        .minimap canvas { display: block; border-radius: 4px; }
+        .minimap .mm-title { font-size: 9px; color: #666666; text-align: center; padding-top: 2px; }
+
+        /* Onboarding: first-visit guide + help button reopens it */
+        .onboarding { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: none; align-items: center; justify-content: center; z-index: 250; }
+        .onboarding.active { display: flex; }
+        .onboarding-card { background: #ffffff; border: 1px solid #000000; border-top: 3px solid var(--stage-graph); border-radius: 12px; padding: 24px; max-width: 520px; width: 90%; }
+        .onboarding-card h2 { font-size: 16px; color: #000000; margin-bottom: 14px; }
+        .ob-step { display: flex; gap: 10px; align-items: flex-start; font-size: 12px; color: #333333; line-height: 1.5; margin-bottom: 10px; }
+        .ob-dot { flex: 0 0 10px; width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; }
+        .ob-em { color: #d00; font-weight: 700; }
+        .concept-tooltip.pinned { pointer-events: auto; display: flex; flex-direction: column; max-height: min(72vh, 640px); }
+        .concept-tooltip .tt-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; cursor: grab; user-select: none; -webkit-user-select: none; flex-shrink: 0; }
+        .concept-tooltip.pinned .tt-head:active { cursor: grabbing; }
+        .concept-tooltip .tt-body { overflow-y: auto; min-height: 0; overscroll-behavior: contain; scrollbar-width: thin; }
+        .concept-tooltip.pinned .tt-head:active { cursor: grabbing; }
+        .concept-tooltip .tt-head .concept-title { flex: 1; }
+        .concept-tooltip .tt-close { background: none; border: 1px solid #cccccc; border-radius: 4px; width: 20px; height: 20px; font-size: 12px; line-height: 1; color: #000000; cursor: pointer; flex-shrink: 0; }
+        .concept-tooltip .tt-close:hover { background: #f0f0f0; }
+        .concept-tooltip .tt-sources { margin-top: 8px; padding-top: 8px; border-top: 1px solid #cccccc; font-size: 10px; line-height: 1.9; }
+        .concept-tooltip .tt-src-label { color: #666666; margin-right: 4px; }
+        .concept-tooltip .tt-src { color: var(--stage-graph); text-decoration: none; margin-right: 8px; border-bottom: 1px dotted currentColor; }
+        .concept-tooltip .tt-src:hover { color: #d00; }
+        .concept-tooltip .tt-src-more { color: #666666; }
+        .ob-nav { font-size: 11px; color: #666666; border-top: 1px solid #dddddd; padding-top: 10px; margin: 12px 0 4px; line-height: 1.6; }
+        .help-btn { background: #ffffff; border: 1px solid #000000; border-radius: 50%; width: 26px; height: 26px; font-size: 13px; font-weight: 700; cursor: pointer; line-height: 1; }
+        .help-btn:hover { background: #f0f0f0; }
+
+        /* Theme blend: large surfaces ease slowly, small interactive ones quickly */
+        body, .header, .sidebar, .right-panel, .center, .stats-bar, .concept-tooltip {
+            transition: background-color 0.6s ease, color 0.6s ease, border-color 0.6s ease;
+        }
+        .heatmap-overlay, .legend, .minimap, .control-btn, .zoom-controls, .panel-toggle, .panel-tabs,
+        .feed-item, .sentence-item, .summary-content, .summary-card,
+        .onboarding-card, .concept-tooltip .sentence, .concept-tooltip .tt-close,
+        .help-btn, .btn-secondary, .btn {
+            transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+        }
+
+        /* ===== Dark theme (body.dark; canvas colors come from the JS palette) ===== */
+        body.dark { background: #111111; color: #e8e8e8; }
+        body.dark .header { background: #111111; border-bottom-color: #333333; }
+        body.dark .header h1 { color: #f0f0f0; }
+        body.dark .header .status { color: #aaaaaa; }
+        body.dark .sidebar, body.dark .right-panel, body.dark .center, body.dark .stats-bar { background: #111111; border-color: #333333; }
+        body.dark .sidebar { box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5); }
+        body.dark .panel-toggle { background: #1a1a1a; border-color: #444444; color: #999999; }
+        body.dark .panel-toggle:hover { background: #262626; color: #ffffff; }
+        body.dark .zoom-level, body.dark .threat-meta,
+        body.dark .legend .labels, body.dark .mm-title, body.dark .loading-text { color: #999999; }
+        body.dark .btn { border-color: transparent; }
+        body.dark .btn-secondary { background: #111111; color: #f0f0f0; border-color: #666666; }
+        body.dark .btn-secondary:hover { background: #262626; }
+        body.dark .btn:disabled { background: #333333; border-color: #333333; }
+        body.dark .heatmap-overlay, body.dark .legend, body.dark .minimap,
+        body.dark .zoom-controls { background: rgba(17, 17, 17, 0.92); }
+        body.dark .control-btn { background: rgba(17, 17, 17, 0.92); border-color: #666666; color: #e8e8e8; }
+        body.dark .control-btn:hover { border-color: #999999; background: #262626; }
+        body.dark .concept-tooltip { background: rgba(20, 20, 20, 0.98); border-color: #555555; box-shadow: 0 8px 32px rgba(0,0,0,0.6); }
+        body.dark .concept-tooltip .concept-title { color: #f0f0f0; }
+        body.dark .concept-tooltip .concept-meta { color: #aaaaaa; border-bottom-color: #333333; }
+        body.dark .concept-tooltip .sentence { background: #1a1a1a; border-color: #333333; border-left-color: #888888; color: #cccccc; }
+        body.dark .concept-tooltip .more { color: #aaaaaa; }
+        body.dark .concept-tooltip .tt-close { border-color: #444444; color: #e8e8e8; }
+        body.dark .concept-tooltip .tt-close:hover { background: #262626; }
+        body.dark .concept-tooltip .tt-src-label, body.dark .concept-tooltip .tt-src-more { color: #999999; }
+        body.dark .threat-card { background: #1a1a1a; border-color: #444444; }
+        body.dark .threat-card:hover { border-color: #888888; background: #262626; }
+        body.dark .threat-card.emerging:hover { background: #2a1414; }
+        body.dark .threat-strength { color: #f0f0f0; }
+        body.dark .sentence-item { background: #1a1a1a; border-color: #333333; color: #cccccc; }
+        body.dark .threat-inline-detail { background: #1a1a1a; border-color: #444444; color: #cccccc; }
+        body.dark .feed-item { background: #1a1a1a; border-color: #333333; }
+        body.dark .feed-item .feed-label { color: #f0f0f0; }
+        body.dark .feed-item .feed-meta { color: #999999; }
+        body.dark .feed-item.emerging { background: #2a1414; }
+        body.dark .feed-section { border-top-color: #333333; }
+        body.dark .sparkline path { stroke: #e8e8e8; }
+        body.dark .summary-content, body.dark .onboarding-card { background: #1a1a1a; border-color: #444444; }
+        body.dark .summary-card { background: #222222; border-color: #333333; }
+        body.dark .summary-card .label, body.dark .onboarding-card h2 { color: #f0f0f0; }
+        body.dark .summary-card .text { color: #cccccc; }
+        body.dark .close-btn { background: #e8e8e8; color: #111111; }
+        body.dark .ob-step { color: #cccccc; }
+        body.dark .stats-bar .value { color: #f0f0f0; }
+        body.dark .help-btn { background: #1a1a1a; border-color: #666666; }
+        body.dark .help-btn:hover { background: #262626; }
+        body.dark .panel-tabs { background: #111111; border-bottom-color: #333333; }
+        body.dark .toast { background: #e8e8e8; color: #111111; }
+        body.dark .control-btn.active, body.dark .control-btn.active:hover { background: var(--stage-graph); border-color: var(--stage-graph); color: #ffffff; }
     </style>
 
-    <!-- SignalR client for real-time concept updates -->
-    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
+    <!-- SignalR client for real-time concept updates. Version and SRI are
+         pinned: without integrity a compromised CDN could inject script
+         into an authenticated dashboard session. -->
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"
+            integrity="sha384-/taWmisziXYpcfnYsumSUmNaiMvG/fF/OJOUCLnqCIYTrpOZy7WbFF6FfIxwOrfL"
+            crossorigin="anonymous"></script>
 </head>
 <body>
     <div class="header">
-        <h1>Emerging Threat Detector</h1>
-        <div class="status" id="status">Connecting...</div>
+        <div class="brand">
+            <img class="brand-logo" src="/logo.png" alt="" width="32" height="32">
+            <h1>Cycepta <span class="header-subtitle">Emerging Threat Detector</span></h1>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <div class="status" id="status">Connecting...</div>
+            <button class="help-btn" id="themeBtn" onclick="toggleTheme()" title="Theme: System — click to change">◐</button>
+            <button class="help-btn" id="helpBtn" onclick="showOnboarding()" title="How to use the board">?</button>
+        </div>
     </div>
     
     <div class="container">
         <div class="sidebar">
-            <h2>Data Sources</h2>
-            <div id="sources">
-                <div class="source-item"><div class="source-dot"></div>Krebs on Security</div>
-                <div class="source-item"><div class="source-dot"></div>The Hacker News</div>
-                <div class="source-item"><div class="source-dot"></div>NVD CVE Feed</div>
-                <div class="source-item"><div class="source-dot"></div>BleepingComputer</div>
-                <div class="source-item"><div class="source-dot"></div>SecurityWeek</div>
-            </div>
-            <button class="btn" id="fetchBtn" onclick="fetchAndAnalyze()">Fetch & Analyze</button>
-            <button class="btn btn-secondary" onclick="generateSummaries()" id="summaryBtn">Generate Summaries</button>
+            <button class="btn" id="fetchBtn" onclick="fetchAndAnalyze()">Fetch &amp; Analyze</button>
+            <button class="btn btn-secondary btn-report" onclick="generateSummaries()" id="summaryBtn">Generate Summaries</button>
             <button class="btn btn-secondary" onclick="resetView()">Reset View</button>
         </div>
         
         <div class="center">
             <canvas id="heatmapCanvas"></canvas>
+            <button class="panel-toggle left" id="toggleLeft" title="Hide/show left panel (A)" aria-keyshortcuts="A">‹</button>
+            <button class="panel-toggle right" id="toggleRight" title="Hide/show right panel (D)" aria-keyshortcuts="D">›</button>
             
             <div class="heatmap-overlay">
                 <div class="title">Embedding Space (UMAP 2D)</div>
@@ -143,10 +287,16 @@
                 <div class="labels"><span>Low density</span><span>High density</span></div>
             </div>
             
+            <div class="minimap" id="minimapWrap" title="Minimap — click or drag to jump to that part of the board">
+                <canvas id="minimapCanvas" width="168" height="126"></canvas>
+                <div class="mm-title">minimap</div>
+            </div>
+            
             <div class="controls">
-                <button class="control-btn active" onclick="setViewMode('heatmap')" id="btnHeatmap">Heatmap</button>
-                <button class="control-btn" onclick="setViewMode('points')" id="btnPoints">Points</button>
-                <button class="control-btn" onclick="toggleDiff()" id="btnDiff">Diff</button>
+                <button class="control-btn mini-fetch" onclick="fetchAndAnalyze()">Fetch &amp; Analyze</button>
+                <button class="control-btn view-btn active" onclick="setViewMode('heatmap')" id="btnHeatmap">Heatmap</button>
+                <button class="control-btn view-btn" onclick="setViewMode('points')" id="btnPoints">Points</button>
+                <button class="control-btn view-btn" onclick="toggleDiff()" id="btnDiff">Diff</button>
                 <div class="zoom-controls">
                     <button class="control-btn" onclick="zoomIn()">+</button>
                     <span class="zoom-level" id="zoomLevel">100%</span>
@@ -155,33 +305,19 @@
                 </div>
             </div>
 
-            <div class="timeline" id="timeline">
-                <div class="timeline-controls">
-                    <button class="tl-play" id="tlPlay" onclick="toggleTimelinePlay()">&#9654;</button>
-                    <div class="timeline-label" id="timelineLabel">No periods yet</div>
-                </div>
-                <div class="timeline-track" id="timelineTrack"></div>
-                <div class="timeline-legend">
-                    <span style="margin-left:auto;">Click a bar to scrub / replay that period</span>
-                </div>
-            </div>
-            
             <div class="concept-tooltip" id="tooltip"></div>
             
-            <div class="loading-text" id="loading" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 200;"></div>
+            <div class="loading-text analysis-progress" id="loading"></div>
         </div>
         
         <div class="right-panel">
-            <h2>Detected Concepts</h2>
-            <div id="threats"></div>
-            
-            <div class="detail-section" id="detailSection" style="display: none;">
-                <h3>Concept Details</h3>
-                <div id="detailContent"></div>
+            <div class="panel-tabs">
+                <button class="control-btn active" id="tabConcepts" onclick="setTab('concepts')">Concepts</button>
+                <button class="control-btn" id="tabLive" onclick="setTab('live')">Live feed <span class="feed-badge" id="feedBadge" style="display:none;">0 new</span></button>
             </div>
+            <div id="threats"></div>
 
-            <div class="feed-section">
-                <h3>Live Feed <span class="feed-badge" id="feedBadge" style="display:none;">0 new</span></h3>
+            <div class="feed-section" id="feedSection" style="display: none;">
                 <div id="liveFeed"></div>
             </div>
         </div>
@@ -195,12 +331,24 @@
         </div>
     </div>
     
+    <div class="onboarding" id="onboarding">
+        <div class="onboarding-card">
+            <h2>How to read the board</h2>
+            <div class="ob-step"><span class="ob-dot" style="background:var(--stage-graph);"></span><div><b>Board - blue frames.</b> Density map of documents in UMAP space. Circles are concepts with labels underneath. <span class="ob-em">A red EMERGING circle</span> is a newly surfacing threat.</div></div>
+            <div class="ob-step"><span class="ob-dot" style="background:var(--stage-sim);"></span><div><b>Ingest - purple.</b> The "Fetch &amp; Analyze" button pulls fresh RSS/CVE data and runs it through the NCD model; stream events appear under the "Live feed" tab in the right panel.</div></div>
+            <div class="ob-step"><span class="ob-dot" style="background:var(--stage-report);"></span><div><b>Report - green.</b> "Generate Summaries" builds one Markdown security report across all concepts; concept details, quotes and strength history open on a circle or card click.</div></div>
+            <div class="ob-nav">Controls: mouse wheel zooms, dragging the background pans, clicking a circle opens details. Press <b>A</b> / <b>D</b> to hide or show the left/right panel. The <b>minimap in the bottom-right corner</b> shows which part of the board is on screen; click or drag it to jump.</div>
+            <button class="close-btn" onclick="closeOnboarding()">Got it, let's go</button>
+        </div>
+    </div>
+
     <div class="stats-bar">
         <span>Embeddings: <span class="value" id="embeddingCount">0</span></span>
         <span>Concepts: <span class="value" id="conceptCount">0</span></span>
-        <span>Periods: <span class="value" id="periodCount">0</span></span>
         <span>Processing: <span class="value" id="processingTime">0ms</span></span>
     </div>
+
+    <div class="toast" id="toast"></div>
 
     <script>
         // ===== Sentence Database for Concepts =====
@@ -293,7 +441,7 @@
         
         // ===== Heatmap Engine =====
         const canvas = document.getElementById('heatmapCanvas');
-        const ctx = canvas.getContext('2d');
+        let ctx = canvas.getContext('2d');
         const legendCanvas = document.getElementById('legendCanvas');
         const legendCtx = legendCanvas.getContext('2d');
         
@@ -302,11 +450,22 @@
         let diffHeatmapData = null;
         let points = [];
         let blobs = [];
+        let graphEdges = [];
+        let pinnedId = null;
+        let pinnedPos = null;
+        let dragPanel = false;
+        let dragOffX = 0, dragOffY = 0;
         let viewMode = 'heatmap';
         let showDiff = false;
-        let periodCount = 0;
         let referenceHeatmap = null;
         let animFrame = null;
+        let feedEventCount = 0;
+        let seenConceptIds = new Set();
+        // Offscreen copy of everything static (background, grid, density). The
+        // animation loop only blits it and redraws the blob layer on top.
+        let staticCanvas = null;
+        let staticSig = null;
+        const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)');
         
         // Zoom & pan state
         let zoom = 1;
@@ -356,7 +515,11 @@
             height = rect.height;
             render();
         }
-        window.addEventListener('resize', resize);
+        // The canvas must track the settled box of .center: a synchronous
+        // resize during the grid-template-columns transition reads an
+        // in-flight width and pins the canvas under the real map edge,
+        // leaving a dead strip where dots neither draw nor hover.
+        new ResizeObserver(() => requestAnimationFrame(resize)).observe(canvas.parentElement);
         
         // ===== Heatmap Generation =====
         function generateHeatmap(pts, bins = 200) {
@@ -432,30 +595,48 @@
             return 1 - Math.pow(1 - t, 3);
         }
         
-        function animateBlobs() {
+        function anyEmerging() {
+            for (const b of blobs) if (b.emerging) return true;
+            return false;
+        }
+        
+        // One loop drives everything animated: pop-in progress + the emerging
+        // pulse rings. Steady-state pulse is capped at ~24 fps (the ring cycle
+        // is 1600 ms — more frames buy nothing); pop-in runs at full rate for
+        // its ~600 ms. Every frame only blits the static layer and redraws the
+        // blob layer, so animation cost does not grow with heatmap work.
+        const PULSE_MIN_INTERVAL = 42;
+        let lastAnimDraw = 0;
+        
+        function animationTick() {
+            animFrame = null;
             const now = performance.now();
-            let needsUpdate = false;
+            let popActive = false;
             
             blobs.forEach(blob => {
                 if (blob.appearStart === undefined) return;
-                const elapsed = now - blob.appearStart;
-                const duration = 600;
-                const delay = blob.appearDelay || 0;
-                const t = Math.max(0, Math.min(1, (elapsed - delay) / duration));
-                
-                if (t < 1) needsUpdate = true;
-                
+                const t = Math.max(0, Math.min(1, (now - blob.appearStart - blob.appearDelay) / 600));
+                if (t < 1) popActive = true;
                 blob.animScale = easeOutElastic(t);
                 blob.animOpacity = easeOutCubic(Math.min(1, t * 2));
             });
             
-            render();
-            
-            if (needsUpdate) {
-                animFrame = requestAnimationFrame(animateBlobs);
-            } else {
-                animFrame = null;
+            if (!popActive && !anyEmerging()) {
+                render();
+                return;
             }
+            
+            if (popActive || now - lastAnimDraw >= PULSE_MIN_INTERVAL) {
+                render();
+                lastAnimDraw = now;
+            }
+            
+            animFrame = requestAnimationFrame(animationTick);
+        }
+        
+        function kickAnimation() {
+            if (REDUCED_MOTION.matches) return;
+            if (!animFrame) animFrame = requestAnimationFrame(animationTick);
         }
         
         // ===== Zoom & Pan =====
@@ -485,9 +666,15 @@
             return { x: wx * zoom + panX, y: wy * zoom + panY };
         }
         
+        function centerOnWorld(wx, wy, z) {
+            panX = width / 2 - wx * z;
+            panY = height / 2 - wy * z;
+        }
+        
         // Mouse wheel zoom
         canvas.addEventListener('wheel', (e) => {
             e.preventDefault();
+            flight = null;
             const rect = canvas.getBoundingClientRect();
             const mx = e.clientX - rect.left;
             const my = e.clientY - rect.top;
@@ -506,6 +693,7 @@
         
         // Pan with mouse drag
         canvas.addEventListener('mousedown', (e) => {
+            flight = null;
             if (e.button !== 0) return;
             const rect = canvas.getBoundingClientRect();
             const sx = e.clientX - rect.left;
@@ -547,6 +735,7 @@
         let touchCenter = null;
         
         canvas.addEventListener('touchstart', (e) => {
+            flight = null;
             if (e.touches.length === 2) {
                 e.preventDefault();
                 const dx = e.touches[0].clientX - e.touches[1].clientX;
@@ -597,30 +786,151 @@
         });
         
         // ===== Rendering =====
+        // Theme: one palette registry drives every canvas color; the CSS side
+        // mirrors it via body.dark overrides.
+        const THEME_KEY = 'cycepta_theme_v1';
+        const THEME_MODES = ['system', 'light', 'dark'];
+        const systemThemeQuery = window.matchMedia
+            ? window.matchMedia('(prefers-color-scheme: dark)')
+            : null;
+        let themeMode = 'system';
+        function isDark() { return document.body.classList.contains('dark'); }
+        function normalizeThemeMode(mode) {
+            return mode === 'light' || mode === 'dark' ? mode : 'system';
+        }
+        function resolveThemeDark(mode, prefersDark) {
+            if (mode === 'light') return false;
+            if (mode === 'dark') return true;
+            return !!prefersDark;
+        }
+        const THEMES = {
+            light: {
+                bg: '#ffffff', densityChannel: 0, densityComposite: 'darken',
+                point: 'rgba(0, 0, 0, 0.6)',
+                dot: '#000', dotEmerging: '#d00',
+                ring: 'rgba(0, 0, 0, ', ringEmerging: 'rgba(221, 0, 0, ',
+                grid: 'rgba(0, 0, 0, 0.05)',
+                edgeBase: 'rgba(0, 0, 0, ', edgeHot: 'rgba(0, 0, 0, 0.5)',
+                pillBg: 'rgba(255, 255, 255, 0.85)',
+                pillBorder: 'rgba(0, 0, 0, 0.6)', pillBorderEmerging: 'rgba(221, 0, 0, 0.9)',
+                pillText: '#000',
+                miniBg: '#ffffff', miniDot: 'rgba(0, 0, 0, 0.35)',
+                miniDotEmerging: 'rgba(221, 0, 0, 0.9)', miniViewport: 'rgba(37, 99, 235, 0.08)',
+                legendLow: 230, legendHigh: 0,
+            },
+            dark: {
+                bg: '#111111', densityChannel: 255, densityComposite: 'lighten',
+                point: 'rgba(255, 255, 255, 0.55)',
+                dot: '#e8e8e8', dotEmerging: '#ff4444',
+                ring: 'rgba(255, 255, 255, ', ringEmerging: 'rgba(255, 68, 68, ',
+                grid: 'rgba(255, 255, 255, 0.07)',
+                edgeBase: 'rgba(255, 255, 255, ', edgeHot: 'rgba(255, 255, 255, 0.5)',
+                pillBg: 'rgba(20, 20, 20, 0.92)',
+                pillBorder: 'rgba(255, 255, 255, 0.5)', pillBorderEmerging: 'rgba(255, 68, 68, 0.9)',
+                pillText: '#f0f0f0',
+                miniBg: '#181818', miniDot: 'rgba(255, 255, 255, 0.45)',
+                miniDotEmerging: 'rgba(255, 68, 68, 0.9)', miniViewport: 'rgba(96, 165, 250, 0.15)',
+                legendLow: 25, legendHigh: 230,
+            },
+        };
+        const pal = () => THEMES[isDark() ? 'dark' : 'light'];
+        function applyTheme(mode, persist) {
+            themeMode = normalizeThemeMode(mode);
+            const prefersDark = systemThemeQuery ? systemThemeQuery.matches : false;
+            const dark = resolveThemeDark(themeMode, prefersDark);
+            document.body.classList.toggle('dark', dark);
+            heatmapRenderCache = null;   // the density raster bakes the palette in
+            renderLegend();
+            const btn = document.getElementById('themeBtn');
+            if (btn) {
+                const icon = themeMode === 'system' ? '◐' : (dark ? '☾' : '☀');
+                const label = themeMode === 'system'
+                    ? `System (${dark ? 'dark' : 'light'})`
+                    : themeMode[0].toUpperCase() + themeMode.slice(1);
+                btn.textContent = icon;
+                btn.title = `Theme: ${label} — click to change`;
+                btn.setAttribute('aria-label', btn.title);
+            }
+            if (persist) { try { localStorage.setItem(THEME_KEY, themeMode); } catch (err) {} }
+            if (ctx) render();
+        }
+        function toggleTheme() {
+            const next = THEME_MODES[(THEME_MODES.indexOf(themeMode) + 1) % THEME_MODES.length];
+            applyTheme(next, true);
+        }
+        if (systemThemeQuery) {
+            const onSystemThemeChange = () => {
+                if (themeMode === 'system') applyTheme('system', false);
+            };
+            if (typeof systemThemeQuery.addEventListener === 'function') {
+                systemThemeQuery.addEventListener('change', onSystemThemeChange);
+            } else if (typeof systemThemeQuery.addListener === 'function') {
+                systemThemeQuery.addListener(onSystemThemeChange);
+            }
+        }
+
+        function staticStale() {
+            return !staticCanvas || !staticSig
+                || staticSig.w !== width || staticSig.h !== height
+                || staticSig.vm !== viewMode || staticSig.diff !== showDiff
+                || staticSig.hm !== heatmapData || staticSig.pts !== points
+                || staticSig.th !== isDark();
+        }
+        
+        function redrawStaticLayer() {
+            if (!staticCanvas) staticCanvas = document.createElement('canvas');
+            if (staticCanvas.width !== canvas.width) staticCanvas.width = canvas.width;
+            if (staticCanvas.height !== canvas.height) staticCanvas.height = canvas.height;
+            
+            const mainCtx = ctx;
+            ctx = staticCanvas.getContext('2d');
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.fillStyle = pal().bg;
+            ctx.fillRect(0, 0, staticCanvas.width, staticCanvas.height);
+            ctx.save();
+            // Match the main context's devicePixelRatio pre-scale. Baked in
+            // world space (no pan/zoom): the viewport transform is applied
+            // once at blit time, so pan/zoom never rebuild this layer.
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+            const data = showDiff ? diffHeatmapData : heatmapData;
+            if (data && viewMode === 'heatmap') drawHeatmap(data);
+            if (viewMode === 'points' || !data) drawPoints();
+            ctx.restore();
+            ctx = mainCtx;
+            
+            staticSig = { w: width, h: height, vm: viewMode, diff: showDiff, hm: heatmapData, pts: points, th: isDark() };
+        }
+        
+        let minimapSig = null;
         function render() {
             if (!ctx) return;
             
-            // Pure white background
-            ctx.fillStyle = '#ffffff';
+            const needStatic = staticStale();
+            if (needStatic) redrawStaticLayer();
+            
+            ctx.clearRect(0, 0, width, height);
+            ctx.fillStyle = pal().bg;
             ctx.fillRect(0, 0, width, height);
             
             ctx.save();
             ctx.translate(panX, panY);
             ctx.scale(zoom, zoom);
-            
             drawGrid();
-            
-            const data = showDiff ? diffHeatmapData : heatmapData;
-            if (data && viewMode === 'heatmap') drawHeatmap(data);
-            if (viewMode === 'points' || !data) drawPoints();
+            ctx.drawImage(staticCanvas, 0, 0, width, height);
+            drawGraphEdges();
             drawBlobs();
             drawConceptLabels();
-            
             ctx.restore();
+            
+            const mSig = `${panX}|${panY}|${zoom}|${needStatic}`;
+            if (needStatic || mSig !== minimapSig) {
+                renderMinimap();
+                minimapSig = mSig;
+            }
         }
         
         function drawGrid() {
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.05)';
+            ctx.strokeStyle = pal().grid;
             ctx.lineWidth = 1;
             ctx.setLineDash([2, 6]);
             for (let i = 1; i < 12; i++) {
@@ -641,7 +951,8 @@
             if (maxVal === 0) return;
             
             // Cache the rasterized density picture per dataset
-            let src = heatmapRenderCache && heatmapRenderCache.ref === data ? heatmapRenderCache.canvas : null;
+            let src = heatmapRenderCache && heatmapRenderCache.ref === data && heatmapRenderCache.dark === isDark()
+                ? heatmapRenderCache.canvas : null;
             if (!src) {
                 const off = document.createElement('canvas');
                 off.width = bins; off.height = bins;
@@ -653,19 +964,19 @@
                         const v = data[r][c] / maxVal;
                         if (v < 0.02) continue;
                         const i = (r * bins + c) * 4;
-                        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+                        const dv = pal().densityChannel;
+                        d[i] = dv; d[i + 1] = dv; d[i + 2] = dv;
                         d[i + 3] = Math.min(1, v * 1.4) * 200;
                     }
                 }
                 octx.putImageData(img, 0, 0);
-                heatmapRenderCache = { ref: data, canvas: off };
+                heatmapRenderCache = { ref: data, dark: isDark(), canvas: off };
                 src = off;
             }
             
-            // Thin black density contours on white
             ctx.save();
             ctx.imageSmoothingEnabled = true;
-            ctx.globalCompositeOperation = 'darken';
+            ctx.globalCompositeOperation = pal().densityComposite;
             ctx.globalAlpha = 0.4;
             ctx.drawImage(src, 0, 0, bins, bins, 0, 0, width, height);
             ctx.globalAlpha = 1;
@@ -676,54 +987,99 @@
             points.forEach(p => {
                 ctx.beginPath();
                 ctx.arc(p.x * width, p.y * height, 2, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fillStyle = pal().point;
                 ctx.fill();
             });
         }
         
+        // Dot-only rendering with a k-nearest-neighbour graph: each concept is
+        // a dot, edges link spatial neighbours in UMAP space (local embedding
+        // neighbourhood = semantic relatedness). Edge weight follows distance.
+        const GRAPH_K = 2;
+        const GRAPH_MAX_DIST = 0.16;
+        
+        function computeGraphEdges() {
+            graphEdges = [];
+            const n = blobs.length;
+            if (n < 2) return;
+            const seen = new Set();
+            for (let i = 0; i < n; i++) {
+                let b1 = -1, d1 = Infinity, b2 = -1, d2 = Infinity;
+                for (let j = 0; j < n; j++) {
+                    if (i === j) continue;
+                    const dx = blobs[i].x - blobs[j].x;
+                    const dy = blobs[i].y - blobs[j].y;
+                    const d = Math.sqrt(dx * dx + dy * dy);
+                    if (d < d1) { d2 = d1; b2 = b1; d1 = d; b1 = j; }
+                    else if (d < d2) { d2 = d; b2 = j; }
+                }
+                for (const [j, d] of [[b1, d1], [b2, d2]]) {
+                    if (j < 0 || d > GRAPH_MAX_DIST) continue;
+                    const key = i < j ? i + ':' + j : j + ':' + i;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    graphEdges.push({ a: i, b: j, w: 1 - d / GRAPH_MAX_DIST });
+                }
+            }
+        }
+        
+        function drawGraphEdges() {
+            if (!graphEdges.length) return;
+            for (const e of graphEdges) {
+                const A = blobs[e.a], B = blobs[e.b];
+                const hot = A.hovered || B.hovered;
+                ctx.strokeStyle = hot
+                    ? pal().edgeHot
+                    : `${pal().edgeBase}${(0.06 + 0.18 * e.w).toFixed(3)})`;
+                ctx.lineWidth = hot ? 2 / zoom : 1 / zoom;
+                ctx.beginPath();
+                ctx.moveTo(A.x * width, A.y * height);
+                ctx.lineTo(B.x * width, B.y * height);
+                ctx.stroke();
+            }
+        }
+        
         function drawBlobs() {
+            const now = performance.now();
+            const z = zoom;
             blobs.forEach((blob) => {
                 const scale = blob.animScale !== undefined ? blob.animScale : 1;
                 const opacity = blob.animOpacity !== undefined ? blob.animOpacity : 1;
                 if (opacity <= 0) return;
                 
+                const emerging = blob.emerging === true;
                 const cx = blob.x * width, cy = blob.y * height;
-                const r = blob.radius * Math.min(width, height) * scale;
+                // Dots keep a constant size on screen at any zoom level;
+                // blob.radius survives for hit-testing only.
+                const dotR = (emerging ? 5 : 3.5) * (blob.hovered ? 1.4 : 1) * scale / z;
                 
                 ctx.globalAlpha = opacity;
                 
-                // Glow
-                const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 2);
-                gradient.addColorStop(0, 'rgba(0, 0, 0, 0.25)');
-                gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.07)');
-                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
                 ctx.beginPath();
-                ctx.arc(cx, cy, r * 2, 0, Math.PI * 2);
-                ctx.fillStyle = gradient;
+                ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+                ctx.fillStyle = emerging ? pal().dotEmerging : pal().dot;
                 ctx.fill();
                 
-                // Pulse ring
+                // Pop-in ring while the blob is still scaling in
                 if (scale < 1) {
-                    const pulseR = r * (1 + (1 - scale) * 0.5);
                     ctx.beginPath();
-                    ctx.arc(cx, cy, pulseR, 0, Math.PI * 2);
-                    ctx.strokeStyle = `rgba(0, 0, 0, ${0.6 * (1 - scale)})`;
-                    ctx.lineWidth = 2;
+                    ctx.arc(cx, cy, dotR * (1 + (1 - scale) * 2.5), 0, Math.PI * 2);
+                    ctx.strokeStyle = `${pal().ring}${0.6 * (1 - scale)})`;
+                    ctx.lineWidth = 2 / z;
                     ctx.stroke();
                 }
                 
-                // Circle
-                ctx.beginPath();
-                ctx.arc(cx, cy, r, 0, Math.PI * 2);
-                ctx.strokeStyle = blob.hovered ? '#000' : '#000';
-                ctx.lineWidth = blob.hovered ? 3 : 2;
-                ctx.stroke();
-                
-                // Center dot
-                ctx.beginPath();
-                ctx.arc(cx, cy, 4 * scale, 0, Math.PI * 2);
-                ctx.fillStyle = '#000';
-                ctx.fill();
+                // Emerging: expanding accent rings, phase-driven by the clock
+                if (emerging) {
+                    for (let k = 0; k < 2; k++) {
+                        const phase = ((now / 1600) + k * 0.5) % 1;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, dotR * (1.6 + 1.8 * phase), 0, Math.PI * 2);
+                        ctx.strokeStyle = `${pal().ringEmerging}${(0.55 * (1 - phase)).toFixed(3)})`;
+                        ctx.lineWidth = 2 / z;
+                        ctx.stroke();
+                    }
+                }
                 
                 ctx.globalAlpha = 1;
             });
@@ -733,72 +1089,254 @@
             ctx.font = '11px Segoe UI, sans-serif';
             ctx.textAlign = 'center';
             blobs.forEach(blob => {
-                if (!blob.label) return;
+                if ((!blob.hovered && blob.conceptId !== pinnedId && !(flight && flight.blob === blob)) || !blob.label) return;
                 const opacity = blob.animOpacity !== undefined ? blob.animOpacity : 1;
                 if (opacity <= 0) return;
                 
                 const cx = blob.x * width, cy = blob.y * height;
-                const r = blob.radius * Math.min(width, height);
+                // Constant screen-space gap below the dot, independent of zoom
+                const off = 18 / zoom;
                 const textWidth = ctx.measureText(blob.label).width + 12;
                 
                 ctx.globalAlpha = opacity;
                 
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-                ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
-                ctx.lineWidth = 1;
+                ctx.fillStyle = pal().pillBg;
+                ctx.strokeStyle = blob.emerging ? pal().pillBorderEmerging : pal().pillBorder;
+                ctx.lineWidth = 1 / zoom;
                 ctx.beginPath();
-                ctx.roundRect(cx - textWidth / 2, cy + r + 8, textWidth, 18, 4);
+                ctx.roundRect(cx - textWidth / 2, cy + off, textWidth, 18, 4);
                 ctx.fill();
                 ctx.stroke();
                 
-                ctx.fillStyle = '#000';
-                ctx.fillText(blob.label, cx, cy + r + 20);
+                ctx.fillStyle = pal().pillText;
+                ctx.fillText(blob.label, cx, cy + off + 13);
                 
                 ctx.globalAlpha = 1;
             });
         }
         
         function renderLegend() {
+            const p = pal();
             for (let x = 0; x < legendCanvas.width; x++) {
                 const t = x / legendCanvas.width;
-                const gray = Math.round((1 - t) * 230);
+                const gray = Math.round(p.legendLow + (p.legendHigh - p.legendLow) * t);
                 legendCtx.fillStyle = `rgb(${gray},${gray},${gray})`;
                 legendCtx.fillRect(x, 0, 1, legendCanvas.height);
             }
         }
         
-        // ===== Data Management =====
-        function addPoints(newPoints, periodId) {
-            const colors = ['#e94560', '#00ff88', '#4ecdc4', '#ffe66d', '#ff6b6b', '#c44dff'];
-            const color = colors[periodCount % colors.length];
-            newPoints.forEach(p => points.push({ ...p, color, period: periodId }));
-            
-            heatmapData = generateHeatmap(points);
-            diffHeatmapData = referenceHeatmap ? computeDiffHeatmap(heatmapData, referenceHeatmap) : heatmapData;
-            
-            if (periodCount % 3 === 0 && heatmapData) referenceHeatmap = heatmapData;
-            periodCount++;
-            updateStats();
+        // ===== Minimap =====
+        // Corner map of the whole board: every concept as a dot (red = emerging)
+        // plus the currently visible viewport rectangle. Click/drag jumps there.
+        const mmCanvas = document.getElementById('minimapCanvas');
+        const mmCtx = mmCanvas.getContext('2d');
+        const STAGE_GRAPH_HEX = '#2563eb';
+        let mmDragging = false;
+
+        function renderMinimap() {
+            if (!mmCtx || !width || !height) return;
+            const mw = mmCanvas.width, mh = mmCanvas.height;
+            mmCtx.fillStyle = pal().miniBg;
+            mmCtx.fillRect(0, 0, mw, mh);
+
+            blobs.forEach(blob => {
+                const r = Math.min(5, Math.max(1.5, blob.radius * Math.min(mw, mh) * 2));
+                mmCtx.beginPath();
+                mmCtx.arc(blob.x * mw, blob.y * mh, r, 0, Math.PI * 2);
+                mmCtx.fillStyle = blob.emerging ? pal().miniDotEmerging : pal().miniDot;
+                mmCtx.fill();
+            });
+
+            const fx0 = -panX / (zoom * width);
+            const fy0 = -panY / (zoom * height);
+            const fw = 1 / zoom, fh = 1 / zoom;
+            mmCtx.fillStyle = pal().miniViewport;
+            mmCtx.fillRect(fx0 * mw, fy0 * mh, fw * mw, fh * mh);
+            mmCtx.strokeStyle = STAGE_GRAPH_HEX;
+            mmCtx.lineWidth = 1.5;
+            mmCtx.strokeRect(fx0 * mw, fy0 * mh, fw * mw, fh * mh);
+        }
+
+        function minimapNavigate(e) {
+            if (!width || !height) return;
+            const rect = mmCanvas.getBoundingClientRect();
+            const fx = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+            const fy = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+            centerOnWorld(fx * width, fy * height, zoom);
             render();
+        }
+
+        mmCanvas.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            mmDragging = true;
+            minimapNavigate(e);
+        });
+        window.addEventListener('mousemove', (e) => { if (mmDragging) minimapNavigate(e); });
+        window.addEventListener('mouseup', () => { mmDragging = false; });
+        
+        const TABS = {
+            concepts: { btn: document.getElementById('tabConcepts'), sections: [document.getElementById('threats')] },
+            live: { btn: document.getElementById('tabLive'), sections: [document.getElementById('feedSection')] },
+        };
+        
+        function setTab(id) {
+            for (const [tabId, tab] of Object.entries(TABS)) {
+                const on = tabId === id;
+                tab.btn.classList.toggle('active', on);
+                tab.sections.forEach(el => el.style.display = on ? '' : 'none');
+            }
+        }
+        
+        let toastTimer = null;
+        function showToast(text) {
+            const el = document.getElementById('toast');
+            el.textContent = text;
+            el.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+        }
+        
+        let flight = null;
+        
+        function focusConcept(conceptId) {
+            if (!conceptId) { showToast('Concept is not on the map'); return; }
+            const blob = blobs.find(b => b.conceptId === conceptId);
+            if (!blob) { showToast('Concept is not on the map'); return; }
+            selectThreatByBlob(blob);
+            setTab('concepts');
+            // Open pinned detail panel (same as clicking a blob on the canvas)
+            pinnedId = conceptId;
+            pinnedPos = { left: Math.max(0, width / 2 - 170), top: Math.max(0, height / 2 - 60) };
+            showPinned();
+
+            
+            const wx = blob.x * width, wy = blob.y * height;
+            const zoom1 = Math.max(zoom, 2.2);
+            if (REDUCED_MOTION.matches) {
+                flight = null;
+                zoom = zoom1;
+                centerOnWorld(wx, wy, zoom1);
+                updateZoomLabel();
+                render();
+                return;
+            }
+            flight = { t0: performance.now(), dur: 350, wx, wy, zoom0: zoom, zoom1, blob };
+            requestAnimationFrame(flightTick);
+        }
+        
+        function flightTick() {
+            if (!flight) return;
+            const t = Math.min(1, (performance.now() - flight.t0) / flight.dur);
+            zoom = flight.zoom0 + (flight.zoom1 - flight.zoom0) * easeOutCubic(t);
+            centerOnWorld(flight.wx, flight.wy, zoom);
+            updateZoomLabel();
+            render();
+            if (t < 1) requestAnimationFrame(flightTick);
+            else flight = null;
+        }
+        
+        // ===== Data Management =====
+        // Single flat plane: every persisted concept contributes points and a blob.
+        // The plane is rebuilt from scratch on each refresh — no per-period
+        // segmentation, no period coloring, no timeline scrubbing.
+        const MAX_POINTS_PER_CONCEPT = 60;
+        async function loadAllConcepts() {
+            let concepts = [];
+            try {
+                const resp = await fetch('/api/v1/concepts?limit=1000');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                concepts = data.concepts || [];
+            } catch (e) {
+                console.warn('concepts load failed:', e);
+                return;
+            }
+
+            points = [];
+            let totalDocs = 0;
+            concepts.forEach(c => {
+                const coords = (c.coordinates && c.coordinates.length === 2) ? c.coordinates : [200, 200];
+                const docs = c.documentCount || 0;
+                totalDocs += docs;
+                const scatter = Math.min(Math.max(docs, 1), MAX_POINTS_PER_CONCEPT);
+                for (let i = 0; i < scatter; i++) {
+                    points.push({
+                        x: (coords[0] / 400) + (Math.random() - 0.5) * 0.04,
+                        y: (coords[1] / 400) + (Math.random() - 0.5) * 0.04,
+                    });
+                }
+            });
+
+            heatmapData = points.length ? generateHeatmap(points) : null;
+            // Fixed reference plane: captured once on first data, never rolled
+            // forward — diff mode always compares against that same plane.
+            if (!referenceHeatmap && heatmapData) referenceHeatmap = heatmapData;
+            diffHeatmapData = (referenceHeatmap && heatmapData)
+                ? computeDiffHeatmap(heatmapData, referenceHeatmap)
+                : heatmapData;
+
+            const newBlobs = concepts.map(c => ({
+                x: ((c.coordinates?.[0] || 200) / 400),
+                y: ((c.coordinates?.[1] || 200) / 400),
+                radius: 0.02 + (c.strength || 0.1) * 0.03,
+                strength: c.strength || 0,
+                label: (c.summary || c.label || c.source || 'Concept').substring(0, 30),
+                reportLabel: c.label || c.summary || c.source || 'Concept',
+                summaryText: c.summary || '',
+                docCount: c.documentCount || 0,
+                sentences: c.sentences || [],
+                sources: c.documents || [],
+                source: c.source || '',
+                firstSeen: c.firstSeen || '',
+                lastSeen: c.lastSeen || '',
+                conceptId: c.conceptId || '',
+                emerging: c.emerging === true,
+            }));
+            const grew = newBlobs.length > blobs.length;
+            setBlobs(newBlobs, grew);
+            displayThreats(newBlobs, grew);
+            updateStats();
+            document.getElementById('embeddingCount').textContent = totalDocs;
+            const info = document.getElementById('heatmapInfo');
+            if (info) info.textContent = `Documents: ${totalDocs} | Concepts: ${concepts.length}`;
+            render();
+        }
+
+        let planeRefreshTimer = null;
+        function schedulePlaneRefresh() {
+            if (planeRefreshTimer) return;
+            planeRefreshTimer = setTimeout(() => {
+                planeRefreshTimer = null;
+                loadAllConcepts();
+            }, 3000);
         }
         
         function setBlobs(newBlobs, animate = false) {
-            if (animFrame) cancelAnimationFrame(animFrame);
+            if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
             
-            if (animate) {
-                const now = performance.now();
-                newBlobs.forEach((blob, i) => {
-                    blob.appearStart = now;
-                    blob.appearDelay = i * 80;
-                    blob.animScale = 0;
-                    blob.animOpacity = 0;
-                });
-            }
+            const now = performance.now();
+            let popIndex = 0;
+            newBlobs.forEach((blob) => {
+                const isNew = !seenConceptIds.has(blob.conceptId);
+                if (isNew) {
+                    if (animate && !REDUCED_MOTION.matches) {
+                        blob.appearStart = now;
+                        blob.appearDelay = popIndex * 80;
+                        popIndex++;
+                    }
+                    blob.newlySeen = true;
+                    seenConceptIds.add(blob.conceptId);
+                }
+            });
             
             blobs = newBlobs;
-            
-            if (animate) {
-                animFrame = requestAnimationFrame(animateBlobs);
+            computeGraphEdges();
+            if (pinnedId !== null) {
+                if (newBlobs.some(b => b.conceptId === pinnedId)) showPinned();
+                else unpinPanel();
+            }
+            if (!REDUCED_MOTION.matches && (popIndex > 0 || anyEmerging())) {
+                kickAnimation();
             } else {
                 render();
             }
@@ -806,13 +1344,12 @@
         
         function updateStats() {
             document.getElementById('embeddingCount').textContent = points.length;
-            document.getElementById('periodCount').textContent = periodCount;
         }
         
         // ===== View Controls =====
         function setViewMode(mode) {
             viewMode = mode;
-            document.querySelectorAll('.control-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
             document.getElementById(mode === 'heatmap' ? 'btnHeatmap' : 'btnPoints').classList.add('active');
             render();
         }
@@ -824,107 +1361,12 @@
         }
         
         function resetView() {
-            if (animFrame) cancelAnimationFrame(animFrame);
-            points = []; blobs = []; heatmapData = null; diffHeatmapData = null; referenceHeatmap = null;
-            periodCount = 0;
+            if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
             zoom = 1; panX = 0; panY = 0;
             updateZoomLabel();
-            document.getElementById('threats').innerHTML = '';
-            document.getElementById('detailSection').style.display = 'none';
-            updateStats();
-            render();
-        }
-        
-        // ===== Global Timeline (E) =====
-        let periodsData = [];
-        let currentPeriodIndex = -1;
-        let timelinePlaying = false;
-        let timelineTimer = null;
-        
-        async function loadTimeline() {
-            try {
-                const resp = await fetch('/api/v1/concepts/periods?limit=1000');
-                if (!resp.ok) return;
-                const data = await resp.json();
-                periodsData = data.periods || [];
-                renderTimeline();
-            } catch (e) {
-                console.warn('timeline load failed:', e);
-            }
-        }
-        
-        function renderTimeline() {
-            const track = document.getElementById('timelineTrack');
-            const label = document.getElementById('timelineLabel');
-            if (!periodsData.length) {
-                track.innerHTML = '<div class="timeline-label" style="flex:1;color:#999;">Waiting for periods from the engine...</div>';
-                if (label) label.textContent = 'No periods yet';
-                return;
-            }
-            const tick = periodsData.length > 60 ? 10 : 5;
-            const cellsHtml = periodsData.map((p, i) => {
-                const active = i === currentPeriodIndex ? 'active' : '';
-                return `<div class="timeline-cell ${active}" data-idx="${i}" title="${escHtml(p.periodId)} · ${p.novelConcepts || 0} new">${(i + 1) % tick === 0 ? (i + 1) : ''}</div>`;
-            }).join('');
-            track.innerHTML = cellsHtml;
-            track.querySelectorAll('.timeline-cell').forEach(cell => {
-                cell.onclick = () => scrubToPeriod(parseInt(cell.dataset.idx, 10));
-            });
-            const cur = periodsData[currentPeriodIndex];
-            label.textContent = cur
-                ? `Period ${currentPeriodIndex + 1}/${periodsData.length} — ${cur.periodId} · ${cur.totalDocuments || 0} docs · ${cur.novelConcepts || 0} new`
-                : `${periodsData.length} period(s) — click a bar to replay`;
-        }
-        
-        function scrubToPeriod(idx) {
-            if (idx < 0 || idx >= periodsData.length) return;
-            currentPeriodIndex = idx;
-            const period = periodsData[idx];
-            const concepts = period.concepts || [];
-            const newBlobs = concepts.map(c => ({
-                x: ((c.coordinates?.[0] || 200) / 400),
-                y: ((c.coordinates?.[1] || 200) / 400),
-                radius: 0.02 + (c.strength || 0.1) * 0.03,
-                strength: c.strength || 0,
-                label: (c.summary || c.label || 'Concept').substring(0, 30),
-                docCount: c.documentCount || 0,
-                period: period.periodId,
-                sentences: [],
-                source: '',
-                conceptId: c.conceptId || '',
-                newlySeen: false,
-            }));
-            setBlobs(newBlobs, true);
-            if (newBlobs.length) displayThreats(newBlobs, true);
-            renderTimeline();
-        }
-        
-        function toggleTimelinePlay() {
-            const btn = document.getElementById('tlPlay');
-            timelinePlaying = !timelinePlaying;
-            btn.classList.toggle('playing', timelinePlaying);
-            btn.innerHTML = timelinePlaying ? '&#10073;&#10073;' : '&#9654;';
-            if (timelinePlaying) {
-                if (currentPeriodIndex >= periodsData.length - 1) currentPeriodIndex = -1;
-                timelinePlayNext();
-            } else if (timelineTimer) {
-                clearTimeout(timelineTimer);
-                timelineTimer = null;
-            }
-        }
-        
-        function timelinePlayNext() {
-            if (!timelinePlaying) return;
-            if (!periodsData.length) { toggleTimelinePlay(); return; }
-            const next = currentPeriodIndex + 1;
-            if (next >= periodsData.length) {
-                toggleTimelinePlay();
-                currentPeriodIndex = periodsData.length - 1;
-                renderTimeline();
-                return;
-            }
-            scrubToPeriod(next);
-            timelineTimer = setTimeout(timelinePlayNext, 1200);
+            clearInlineDetail();
+            // Camera reset + re-sync the plane from the database — never wipes it.
+            loadAllConcepts();
         }
         
         // ===== Tooltip with Sentences =====
@@ -949,9 +1391,13 @@
                 found.hovered = true;
                 canvas.style.cursor = 'pointer';
                 
+                // While a panel is pinned it stays where the operator dropped
+                // it; hover only updates the cursor/edge highlight.
+                if (pinnedId !== null) { render(); return; }
+                
                 const sentences = found.sentences || [];
                 const sentencesHtml = sentences.slice(0, 3).map(s => 
-                    `<div class="sentence">${s}</div>`
+                    `<div class="sentence">${escHtml(s)}</div>`
                 ).join('');
                 const moreText = sentences.length > 3 ? `<div class="more">+${sentences.length - 3} more sentences...</div>` : '';
                 
@@ -959,21 +1405,21 @@
                 tooltip.style.left = Math.min(sx + 15, width - 340) + 'px';
                 tooltip.style.top = Math.min(sy - 10, height - 200) + 'px';
                 tooltip.innerHTML = `
-                    <div class="concept-title">${found.label || 'Unknown Concept'}</div>
-                    <div class="concept-meta">Strength: ${(found.strength || 0).toFixed(3)} | Documents: ${found.docCount || 0} | Period: ${found.period || '-'}</div>
+                    <div class="concept-title">${escHtml(found.label || 'Unknown Concept')}</div>
+                    <div class="concept-meta">Strength: ${(found.strength || 0).toFixed(3)} | Documents: ${found.docCount || 0}${found.emerging ? ' | <span class="tooltip-emerging">EMERGING</span>' : ''}</div>
                     ${sentencesHtml}
                     ${moreText}
                 `;
             } else {
                 canvas.style.cursor = 'default';
-                tooltip.style.display = 'none';
+                if (pinnedId === null) tooltip.style.display = 'none';
             }
             render();
         });
         
         canvas.addEventListener('mouseleave', () => {
             blobs.forEach(b => b.hovered = false);
-            document.getElementById('tooltip').style.display = 'none';
+            if (pinnedId === null) document.getElementById('tooltip').style.display = 'none';
             render();
         });
         
@@ -985,12 +1431,26 @@
             const mx = world.x / width;
             const my = world.y / height;
             
+            let hit = null;
             for (const blob of blobs) {
                 const dx = mx - blob.x, dy = my - blob.y;
-                if (Math.sqrt(dx * dx + dy * dy) < blob.radius * 2) {
-                    selectThreatByBlob(blob);
-                    break;
-                }
+                if (Math.sqrt(dx * dx + dy * dy) < blob.radius * 2) { hit = blob; break; }
+            }
+            
+            if (hit) {
+                if (pinnedId === hit.conceptId) { unpinPanel(); return; }
+                // Pin where the hover panel currently sits; on a direct click
+                // (no hover panel yet) pin near the dot.
+                const tooltip = document.getElementById('tooltip');
+                const floating = pinnedId === null && tooltip.style.display === 'block' && tooltip.style.left;
+                const left = floating ? parseFloat(tooltip.style.left) : Math.min(sx + 15, width - 340);
+                const top = floating ? parseFloat(tooltip.style.top) : Math.min(sy - 10, height - 200);
+                pinnedId = hit.conceptId || '';
+                pinnedPos = { left, top };
+                showPinned();
+                render();
+            } else if (pinnedId !== null) {
+                unpinPanel();
             }
         });
         
@@ -998,97 +1458,422 @@
         function escHtml(s) {
             return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         }
+
+        // The security report is Markdown. Escape first, then render the tiny
+        // subset we trust (bold and inline code) so raw asterisks never leak
+        // into the summary card.
+        function formatLlmText(s) {
+            return escHtml(s)
+                .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+                .replace(/`([^`\n]+)`/g, '<code>$1</code>');
+        }
+
+        // Inline formatter for text that has already been escaped by
+        // formatReportMarkdown(). Keeping this separate avoids double-escaping.
+        function formatInlineEscaped(s) {
+            return String(s || '')
+                .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+                .replace(/`([^`\n]+)`/g, '<code>$1</code>');
+        }
+
+        // Render the Security Updates report. The source is escaped first; only
+        // headings, rules, numbered items, tables and inline bold/code are
+        // turned into markup.
+        function formatReportMarkdown(s) {
+            const lines = escHtml(String(s || '')).split('\n');
+            const out = [];
+            let listItems = [];
+            let tableRows = [];
+
+            function flushList() {
+                if (!listItems.length) return;
+                out.push('<ol>' + listItems.map(item => `<li>${formatInlineEscaped(item)}</li>`).join('') + '</ol>');
+                listItems = [];
+            }
+            function flushTable() {
+                if (!tableRows.length) return;
+                let html = '<table>';
+                tableRows.forEach((cells, index) => {
+                    const tag = index === 0 ? 'th' : 'td';
+                    html += '<tr>' + cells.map(cell => `<${tag}>${formatInlineEscaped(cell)}</${tag}>`).join('') + '</tr>';
+                });
+                html += '</table>';
+                out.push(html);
+                tableRows = [];
+            }
+            function flushAll() {
+                flushList();
+                flushTable();
+            }
+
+            for (const raw of lines) {
+                const line = raw.trim();
+                if (!line) {
+                    flushAll();
+                    continue;
+                }
+                if (/^###\s+/.test(line)) {
+                    flushAll();
+                    out.push(`<h3>${formatInlineEscaped(line.replace(/^###\s+/, ''))}</h3>`);
+                    continue;
+                }
+                if (/^##\s+/.test(line)) {
+                    flushAll();
+                    out.push(`<h2>${formatInlineEscaped(line.replace(/^##\s+/, ''))}</h2>`);
+                    continue;
+                }
+                if (/^#\s+/.test(line)) {
+                    flushAll();
+                    out.push(`<h1>${formatInlineEscaped(line.replace(/^#\s+/, ''))}</h1>`);
+                    continue;
+                }
+                if (/^-{3,}\s*$/.test(line)) {
+                    flushAll();
+                    out.push('<hr>');
+                    continue;
+                }
+                if (/^\|/.test(line)) {
+                    flushList();
+                    const cells = line
+                        .replace(/^\|/, '')
+                        .replace(/\|$/, '')
+                        .split(/(?<!\\)\|/)
+                        .map(cell => cell.trim().replace(/\\\|/g, '|'));
+                    if (cells.every(cell => /^:?-{3,}:?$/.test(cell))) continue;
+                    tableRows.push(cells);
+                    continue;
+                }
+                const ordered = line.match(/^\d+\.\s+(.*)$/);
+                if (ordered) {
+                    flushTable();
+                    listItems.push(ordered[1]);
+                    continue;
+                }
+                flushAll();
+                out.push(`<p>${formatInlineEscaped(line)}</p>`);
+            }
+            flushAll();
+            return out.join('');
+        }
+
+        // Allow only absolute http(s) links from feed metadata. escHtml alone
+        // does not stop a javascript: URL from becoming an executable href.
+        // Never resolve relative values against window.location: a bare feed
+        // id such as "CVE-2026-119264" would become a 404 on localhost.
+        function safeUrl(u) {
+            const raw = String(u || '').trim();
+            if (!raw) return '';
+            try {
+                const parsed = new URL(raw);
+                return (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : '';
+            } catch (e) {
+                return '';
+            }
+        }
         
+        let llmRegistry = null;
+        const llmChoiceKey = 'cycepta.llmChoice';
+
+        function readLlmChoice() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(llmChoiceKey) || 'null');
+                if (saved && (saved.providerType === 'local' || saved.providerType === 'api') && typeof saved.name === 'string') return saved;
+            } catch (e) {
+                // corrupted localStorage reads as "no saved choice"
+            }
+            return null;
+        }
+
         async function generateSummaries() {
+            document.getElementById('summaryModal').classList.add('active');
+            if (!blobs.length) {
+                document.getElementById('summariesList').innerHTML =
+                    '<div class="loading-text">Loading concepts...</div>';
+                await loadAllConcepts();
+            }
+            await renderProviderChooser();
+        }
+
+        function localWeightLabel(entry) {
+            if (!entry) return '';
+            if (entry.available && entry.size_human) return `${entry.size_human} on disk`;
+            if (entry.available) return 'weights present';
+            if (entry.size_hint) return `${entry.size_hint} download; not on disk`;
+            return 'weights not found';
+        }
+
+        async function renderProviderChooser() {
+            const list = document.getElementById('summariesList');
+            llmRegistry = null;
+            list.innerHTML = '<div class="loading-text">Loading provider list...</div>';
+            try {
+                const resp = await fetch('/api/v1/analyze/llm-providers');
+                if (resp.ok) llmRegistry = await resp.json();
+            } catch (e) {
+                console.warn('Provider registry unavailable:', e);
+            }
+
+            if (!llmRegistry) {
+                list.innerHTML = `
+                    <div class="sentence-item">Provider list unavailable - the default local model will be used</div>
+                    <button class="close-btn" onclick="continueSummaries()">Continue</button>
+                    <button class="close-btn" onclick="closeSummaryModal()">Cancel</button>
+                `;
+                return;
+            }
+
+            const local = llmRegistry.local || [];
+            const api = llmRegistry.api || [];
+            const saved = readLlmChoice();
+            const savedLocalName = saved && saved.providerType === 'local' && local.some(e => e.name === saved.name) ? saved.name : '';
+            const savedApiName = saved && saved.providerType === 'api' && api.some(e => e.name === saved.name) ? saved.name : '';
+            const firstAvailable = local.findIndex(e => e.available);
+            const localOptions = local.map((e, i) =>
+                `<option value="${i}"${e.name === savedLocalName || (savedLocalName === '' && i === firstAvailable) ? ' selected' : ''}${e.available ? '' : ' disabled'}>${escHtml(e.name)}${e.available ? '' : ' (weights not found)'}</option>`
+            ).join('');
+            const apiOptions = api.map((e, i) =>
+                `<option value="${i}"${e.name === savedApiName ? ' selected' : ''}>${escHtml(e.name)}</option>`
+            ).join('');
+            const localAvailable = local.some(e => e.available);
+            const apiReady = api.some(e => e.key_present);
+            // If the local weights are not mounted, show the API provider
+            // list instead of a disabled local dropdown: that is the only
+            // path to model-written summaries in the container.
+            const defaultType = savedApiName
+                ? 'api'
+                : (localAvailable || !api.length ? 'local' : 'api');
+            const fallbackNote = !localAvailable && !apiReady
+                ? '<div class="sentence-item">Local weights were not found and no API key is set. '
+                  + 'The report will still render with deterministic summaries; add a key below '
+                  + 'for model-written summaries.</div>'
+                : '';
+
+            list.innerHTML = `
+                <div class="summary-card llm-chooser">
+                    <div class="label">Pick the LLM backend for the report</div>
+                    ${fallbackNote}
+                    <label class="llm-radio"><input type="radio" name="llmProvider" value="local" ${defaultType === 'local' ? 'checked' : ''} onchange="switchLlmProvider()"> Local model</label>
+                    <label class="llm-radio"><input type="radio" name="llmProvider" value="api" ${defaultType === 'api' ? 'checked' : ''} onchange="switchLlmProvider()"> API provider</label>
+                    <div id="llmLocalWrap" style="display:${defaultType === 'local' ? 'block' : 'none'};">
+                        <select id="llmLocalSelect" class="llm-field">${localOptions}</select>
+                    </div>
+                    <div id="llmApiWrap" style="display:${defaultType === 'api' ? 'block' : 'none'};">
+                        <select id="llmApiSelect" class="llm-field" onchange="updateLlmKeyHint()">${apiOptions}</select>
+                        <input type="password" id="llmApiKey" class="llm-field" autocomplete="off">
+                        <div class="llm-meta">Cloud-hosted model; no local weights are downloaded.</div>
+                    </div>
+                    <button class="close-btn" onclick="continueSummaries()">Generate report</button>
+                    <button class="close-btn" onclick="closeSummaryModal()">Cancel</button>
+                </div>
+            `;
+            updateLlmKeyHint();
+        }
+
+        function switchLlmProvider() {
+            const type = document.querySelector('input[name="llmProvider"]:checked').value;
+            document.getElementById('llmLocalWrap').style.display = type === 'local' ? 'block' : 'none';
+            document.getElementById('llmApiWrap').style.display = type === 'api' ? 'block' : 'none';
+        }
+
+        function updateLlmKeyHint() {
+            const api = (llmRegistry && llmRegistry.api) || [];
+            const entry = api[parseInt(document.getElementById('llmApiSelect').value, 10)];
+            document.getElementById('llmApiKey').placeholder = entry && entry.key_present
+                ? `key found in the environment (${entry.key_env}), the field can stay empty`
+                : 'enter the key (not stored)';
+        }
+
+        function continueSummaries() {
+            let llm = null;
+            if (llmRegistry) {
+                const type = document.querySelector('input[name="llmProvider"]:checked');
+                if (type && type.value === 'local') {
+                    const entry = (llmRegistry.local || [])[parseInt(document.getElementById('llmLocalSelect').value, 10)];
+                    if (entry) {
+                        llm = { provider: 'local', name: entry.name };
+                        localStorage.setItem(llmChoiceKey, JSON.stringify({ providerType: 'local', name: entry.name }));
+                    }
+                } else if (type && type.value === 'api') {
+                    const entry = (llmRegistry.api || [])[parseInt(document.getElementById('llmApiSelect').value, 10)];
+                    if (entry) {
+                        llm = {
+                            provider: 'api',
+                            name: entry.name,
+                            base_url: entry.base_url,
+                            model: entry.model,
+                            format: entry.format || 'openai',
+                        };
+                        const key = document.getElementById('llmApiKey').value.trim();
+                        if (key) llm.api_key = key;
+                        localStorage.setItem(llmChoiceKey, JSON.stringify({ providerType: 'api', name: entry.name }));
+                    }
+                }
+            }
+            runSummaries(llm);
+        }
+
+        async function requestSummary(body) {
+            const resp = await fetch('/api/v1/analyze/summarize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) {
+                let detail = '';
+                try {
+                    const err = await resp.json();
+                    detail = err.details || err.error || '';
+                } catch (e) {
+                    // non-JSON error body; fall through to the status code
+                }
+                throw new Error(detail || `summary request failed (HTTP ${resp.status})`);
+            }
+            return resp.json();
+        }
+
+        async function runSummaries(llm) {
             const btn = document.getElementById('summaryBtn');
             const list = document.getElementById('summariesList');
             btn.disabled = true;
-            btn.textContent = 'Summarizing with Granite...';
+            btn.textContent = 'Summarizing...';
             
-            list.innerHTML = '<div class="loading-text">Granite-4.0-1B digesting the whole embedding space...</div>';
+            list.innerHTML = '<div class="loading-text">Building the security report from every concept...</div>';
             document.getElementById('summaryModal').classList.add('active');
             
             let summaryText = '';
             let conceptsInput = [];
+            let conceptsConsidered = 0;
+            let selectedItems = 0;
+            let llmItems = 0;
+            let categories = {};
             let fallback = false;
             let severity = '';
             let iocs = null;
             let mitre = [];
             let actions = [];
-            
+            let llmError = '';
+            let modelLabel = '';
+            let modelWeight = '';
+            let reasoning = '';
+
+            if (llm && llm.provider === 'local') {
+                const entry = ((llmRegistry && llmRegistry.local) || [])
+                    .find(item => item.name === llm.name);
+                if (entry) modelWeight = localWeightLabel(entry);
+            }
+
+            // The dashboard can be clicked before the initial concept fetch
+            // finishes. Load on demand so the report is never built from an
+            // empty board.
+            if (!blobs.length) {
+                await loadAllConcepts();
+            }
+
             if (blobs.length) {
-                try {
-                    const resp = await fetch('/api/v1/analyze/summarize', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            concepts: blobs.map(b => ({
-                                label: b.label,
-                                strength: b.strength || 0,
-                                docCount: b.docCount || 0,
-                                sentences: (b.sentences || []).slice(0, 3),
-                            }))
-                        }),
-                    });
-                    if (resp.ok) {
-                        const data = await resp.json();
+                const body = {
+                    concepts: blobs.map(b => ({
+                        label: b.reportLabel || b.label,
+                        summary: b.summaryText || '',
+                        strength: b.strength || 0,
+                        documentCount: b.docCount || 0,
+                        sentences: (b.sentences || []).slice(0, 3),
+                        documents: b.sources || [],
+                        firstSeen: b.firstSeen || '',
+                        lastSeen: b.lastSeen || '',
+                        source: b.source || '',
+                    })),
+                };
+                // A bad key, a provider outage or a malformed response must
+                // not leave the modal empty: retry once with no LLM and show
+                // the deterministic Markdown report instead.
+                const attempts = llm ? [{ ...body, llm }, body] : [body];
+                for (let attempt = 0; attempt < attempts.length; attempt += 1) {
+                    try {
+                        const data = await requestSummary(attempts[attempt]);
                         summaryText = data.summary || '';
                         conceptsInput = data.conceptsInput || [];
+                        conceptsConsidered = data.concepts_considered || data.conceptsConsidered || conceptsInput.length;
+                        selectedItems = data.selected_items || data.selectedItems || conceptsInput.length;
+                        llmItems = data.llm_items || data.llmItems || 0;
+                        categories = data.categories || {};
                         fallback = !!data.fallback;
                         severity = data.severity || '';
                         iocs = data.iocs || null;
                         mitre = data.mitre_techniques || data.mitreTechniques || [];
                         actions = data.recommended_actions || data.recommendedActions || [];
-                    } else {
+                        llmError = data.llm_error || llmError;
+                        modelLabel = data.model || modelLabel;
+                        reasoning = data.reasoning || '';
+                        if (summaryText) break;
+                    } catch (e) {
+                        if (attempt === 0 && llm) {
+                            llmError = e.message || String(e);
+                            fallback = true;
+                            continue;
+                        }
+                        console.warn('LLM summary failed, falling back to templates:', e);
                         fallback = true;
                     }
-                } catch (e) {
-                    console.warn('LLM summary failed, falling back to templates:', e);
-                    fallback = true;
                 }
             } else {
                 fallback = true;
             }
             
-            if (fallback || !summaryText) {
-                list.innerHTML = blobs.map(blob => {
+            if (!summaryText) {
+                const llmErrorLine = llmError ? `<div class="sentence-item">LLM error: ${escHtml(llmError)}</div>` : '';
+                const cards = blobs.map(blob => {
                     const sentences = blob.sentences || [];
-                    const summary = generateAutoSummary(blob.label, sentences);
+                    const cardLabel = blob.reportLabel || blob.label;
+                    const summary = generateAutoSummary(cardLabel, sentences);
                     return `
                         <div class="summary-card">
-                            <div class="label">${escHtml(blob.label)}</div>
+                            <div class="label">${escHtml(cardLabel)}</div>
                             <div class="text">${escHtml(summary)}</div>
-                            <div class="stats">Documents: ${blob.docCount || 0} | Strength: ${(blob.strength || 0).toFixed(3)} | First detected: Period ${blob.period || '?'}</div>
+                            <div class="stats">Documents: ${blob.docCount || 0} | Strength: ${(blob.strength || 0).toFixed(3)}</div>
                         </div>
                     `;
-                }).join('') || '<div class="loading">No concepts loaded. Run Fetch & Analyze first.</div>';
+                }).join('');
+                const reasoningCard = reasoning ? `<div class="summary-card"><div class="label">Model reasoning</div><details><summary style="cursor:pointer;">Show reasoning trace (${escHtml(modelLabel)})</summary><div class="text" style="white-space:pre-wrap;font-size:12px;opacity:.85;margin-top:8px;">${escHtml(reasoning)}</div></details></div>` : '';
+                list.innerHTML = (llmErrorLine + reasoningCard + cards) || '<div class="loading">No concepts loaded. Run Fetch & Analyze first.</div>';
             } else {
                 const iocBlocks = iocs ? Object.entries(iocs)
                     .filter(([k, v]) => v && v.length)
                     .map(([k, v]) => `<div class="sentence-item"><strong>${escHtml(k)}:</strong> ${escHtml(v.slice(0, 8).join(', '))}${v.length > 8 ? '…' : ''}</div>`)
                     .join('') : '';
                 const mitreLine = mitre.length
-                    ? mitre.map(m => `${m.id || m}.${m.name ? ' ' + escHtml(m.name) : ''}`).join(' · ')
+                    ? mitre.map(m => `${escHtml(m.id || m)}.${m.name ? ' ' + escHtml(m.name) : ''}`).join(' · ')
                     : 'none detected';
                 const actionLine = actions.length ? '<ul>' + actions.map(a => `<li>${escHtml(a)}</li>`).join('') + '</ul>' : '';
+                const statsLine = [
+                    modelLabel,
+                    modelWeight ? `weights: ${modelWeight}` : '',
+                    `${conceptsConsidered} concepts considered`,
+                    `${selectedItems} items`,
+                    fallback ? 'deterministic summaries' : `LLM summaries: ${llmItems}/${selectedItems}`,
+                ].filter(Boolean).join(' | ');
+                const detectionDetails = (severity || iocBlocks || mitre.length || actions.length) ? `
+                    <div class="summary-card">
+                        <details>
+                            <summary style="cursor:pointer;">Detection details</summary>
+                            <div class="label" style="margin-top:10px;">Severity</div>
+                            <div class="text">${escHtml(severity || 'unknown')}</div>
+                            ${iocBlocks ? `<div class="label" style="margin-top:8px;">Extracted IOCs</div>${iocBlocks}` : ''}
+                            <div class="label" style="margin-top:8px;">MITRE ATT&amp;CK</div>
+                            <div class="text">${mitreLine}</div>
+                            <div class="label" style="margin-top:8px;">Recommended actions</div>
+                            <div class="text">${actionLine || 'See report for guidance.'}</div>
+                        </details>
+                    </div>` : '';
 
                 list.innerHTML = `
+                    ${llmError ? `<div class="sentence-item">LLM error: ${escHtml(llmError)}</div>` : ''}
                     <div class="summary-card">
-                        <div class="label">LLM Digest of the Embedding Space ${severity ? `<span style="text-transform:uppercase;color:#c00;">[${escHtml(severity)}]</span>` : ''}</div>
-                        <div class="text" style="white-space:pre-wrap;">${escHtml(summaryText)}</div>
-                        <div class="stats">Granite-4.0-1B (Q4_K_M) | ${conceptsInput.length} concepts | LLM summary</div>
+                        <div class="label">Emerging Threat Report ${severity ? `<span style="text-transform:uppercase;color:#c00;">[${escHtml(severity)}]</span>` : ''}</div>
+                        <div class="text report">${formatReportMarkdown(summaryText)}</div>
+                        <div class="stats">${escHtml(statsLine)}</div>
                     </div>
-                    ${iocBlocks ? `<div class="summary-card"><div class="label">Extracted IOCs</div>${iocBlocks}</div>` : ''}
-                    <div class="summary-card">
-                        <div class="label">MITRE ATT&amp;CK</div>
-                        <div class="text">${mitreLine}</div>
-                        <div class="label" style="margin-top:8px;">Recommended actions</div>
-                        <div class="text">${actionLine || 'See digest for guidance.'}</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="label">Concepts in space</div>
-                        <div class="text">${conceptsInput.map(escHtml).join('  ·  ')}</div>
-                    </div>
+                    ${reasoning ? `<div class="summary-card"><div class="label">Model reasoning</div><details><summary style="cursor:pointer;">Show reasoning trace (${escHtml(modelLabel)})</summary><div class="text" style="white-space:pre-wrap;font-size:12px;opacity:.85;margin-top:8px;">${escHtml(reasoning)}</div></details></div>` : ''}
+                    ${detectionDetails}
                 `;
             }
             
@@ -1122,13 +1907,19 @@
         }
         
         // ===== API Integration =====
+        function setLoadingMessage(message) {
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+            loading.innerHTML = `${escHtml(message)}<div class="loading-hint">Concepts appear on the map as they are detected.</div>`;
+        }
+
         async function fetchAndAnalyze() {
+            isInitialLoad = false;
             const btn = document.getElementById('fetchBtn');
             const loading = document.getElementById('loading');
             btn.disabled = true;
-            loading.style.display = 'block';
-            loading.textContent = 'Fetching feeds...';
-            btn.textContent = 'Fetching feeds...';
+            setLoadingMessage('Fetching feeds...');
+            btn.textContent = 'Analyzing...';
             
             try {
                 // 1. Call real .NET API -> fetches RSS/CVE -> sends to Python NCD
@@ -1139,62 +1930,21 @@
                     throw new Error(err.details || err.error || 'Analysis failed');
                 }
                 
-                loading.textContent = 'Processing embeddings...';
-                btn.textContent = 'Processing embeddings...';
+                setLoadingMessage('Updating map...');
                 
                 const result = await resp.json();
                 
-                // 2. If NCD returned concepts with coordinates, plot them
-                if (result.concepts && result.concepts.length > 0) {
-                    // Convert NCD coordinates to canvas points
-                    const newPoints = [];
-                    result.concepts.forEach(c => {
-                        const coords = c.coordinates || [Math.random(), Math.random()];
-                        for (let i = 0; i < (c.documentCount || 10); i++) {
-                            newPoints.push({
-                                x: (coords[0] / 400) + (Math.random() - 0.5) * 0.04,
-                                y: (coords[1] / 400) + (Math.random() - 0.5) * 0.04,
-                            });
-                        }
-                    });
-                    addPoints(newPoints, result.periodId);
-                    
-                    // 3. Create blobs from real concepts with animation
-                    const newBlobs = result.concepts.map(c => ({
-                        x: ((c.coordinates?.[0] || 200) / 400),
-                        y: ((c.coordinates?.[1] || 200) / 400),
-                        radius: 0.02 + (c.strength || 0.1) * 0.03,
-                        strength: c.strength || 0,
-                        label: c.summary?.substring(0, 30) || c.source || 'Unknown Concept',
-                        docCount: c.documentCount || 0,
-                        period: result.periodId,
-                        sentences: c.sentences || [],
-                        source: c.source || '',
-                        conceptId: c.conceptId || '',
-                        newlySeen: false,
-                    }));
-                    setBlobs(newBlobs, true);
-                    displayThreats(newBlobs, true);
-                } else {
-                    const randomPoints = [];
-                    for (let i = 0; i < result.totalDocuments || 50; i++) {
-                        randomPoints.push({ x: Math.random(), y: Math.random() });
-                    }
-                    addPoints(randomPoints, result.periodId);
-                    displayThreats([]);
-                }
-                
+                // 2. Rebuild the single flat plane from ALL persisted concepts
+                //    (batches were persisted as they finished, so the map already
+                //    shows most of them; this catches the final batch too).
                 document.getElementById('processingTime').textContent = 
                     (result.processingTimeMs || 0).toFixed(0) + 'ms';
-                document.getElementById('embeddingCount').textContent = 
-                    (result.totalDocuments || points.length);
-                
-                loadTimeline();
+                await loadAllConcepts();
                     
             } catch (e) {
                 console.error('Analysis failed:', e);
                 document.getElementById('threats').innerHTML = 
-                    `<div class="loading">Error: ${e.message}<br>Make sure Python NCD service is running on port 5000</div>`;
+                    `<div class="loading">Error: ${escHtml(e.message)}<br>Check the API and NCD logs for details.</div>`;
             } finally {
                 btn.disabled = false;
                 loading.style.display = 'none';
@@ -1205,8 +1955,17 @@
         function displayThreats(threats, animate = false) {
             const container = document.getElementById('threats');
             if (!threats.length) {
-                container.innerHTML = '<div class="loading">No new concepts detected. Click again to fetch more data.</div>';
+                if (isInitialLoad) {
+                    // On clean launch with no data yet: leave the right panel empty
+                    // instead of showing a "nothing found" message.
+                    container.innerHTML = '';
+                    document.getElementById('conceptCount').textContent = '0';
+                    clearInlineDetail();
+                    return;
+                }
+                container.innerHTML = '<div class="loading-empty">No new concepts detected. Click again to fetch more data.</div>';
                 document.getElementById('conceptCount').textContent = '0';
+                clearInlineDetail();
                 return;
             }
             
@@ -1215,16 +1974,16 @@
             
             threats.forEach((t, i) => {
                 const card = document.createElement('div');
-                card.className = 'threat-card';
+                card.className = 'threat-card' + (t.emerging ? ' emerging' : '');
                 card.style.opacity = '0';
                 card.style.transform = 'translateX(20px)';
                 card.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
                 card.dataset.conceptId = t.conceptId || '';
                 card.innerHTML = `
-                    <div class="threat-title">${t.label}</div>
+                    <div class="threat-title">${escHtml(t.label)}${t.emerging ? '<span class="badge-emerging">EMERGING</span>' : ''}</div>
                     <div class="threat-meta">
                         <span class="threat-strength">Strength: ${(t.strength || 0).toFixed(2)}</span><br>
-                        Docs: ${t.docCount || 0} | Source: ${t.source || 'RSS/CVE'}
+                        Docs: ${t.docCount || 0} | Source: ${escHtml(t.source || 'RSS/CVE')}
                         ${t.newlySeen ? '<span style="color:#d00;"> ● NEW</span>' : ''}
                     </div>
                     <svg class="sparkline" data-concept-id="${escHtml(t.conceptId || '')}" viewBox="0 0 100 28" preserveAspectRatio="none"></svg>
@@ -1232,11 +1991,15 @@
                 card.onclick = () => selectThreat(i);
                 container.appendChild(card);
                 
-                // seed per-concept history cache for sparkline
+                // seed per-concept history cache for sparkline (dedup on refresh)
                 if (t.conceptId) {
                     conceptHistory[t.conceptId] = conceptHistory[t.conceptId] || [];
-                    conceptHistory[t.conceptId].push({ strength: t.strength || 0, periodId: t.period || '' });
-                    renderSparkline(card.querySelector('.sparkline'), conceptHistory[t.conceptId]);
+                    const hist = conceptHistory[t.conceptId];
+                    const lastPt = hist[hist.length - 1];
+                    if (!lastPt || lastPt.strength !== (t.strength || 0)) {
+                        hist.push({ strength: t.strength || 0, periodId: t.period || '' });
+                    }
+                    renderSparkline(card.querySelector('.sparkline'), hist);
                 }
                 
                 if (animate) {
@@ -1249,6 +2012,12 @@
                     card.style.transform = 'translateX(0)';
                 }
             });
+            
+            if (selectedConceptId) {
+                const card = document.querySelector(`.threat-card[data-concept-id="${CSS.escape(selectedConceptId)}"]`);
+                if (card) selectThreatByBlob(selectedBlob);
+                else clearInlineDetail();
+            }
         }
         
         // ===== Temporal UI: concept history + sparklines =====
@@ -1289,15 +2058,45 @@
             }
         }
         
+        let selectedConceptId = null;
+        let selectedBlob = null;
+        let isInitialLoad = true;
+        
+        function mountInlineDetail(blob) {
+            selectedBlob = blob;
+            selectedConceptId = blob.conceptId || null;
+            document.querySelectorAll('.threat-inline-detail').forEach(el => el.remove());
+            const card = blob.conceptId
+                ? document.querySelector(`.threat-card[data-concept-id="${CSS.escape(blob.conceptId)}"]`)
+                : null;
+            if (!card) return null;
+            const el = document.createElement('div');
+            el.className = 'threat-inline-detail';
+            card.insertAdjacentElement('afterend', el);
+            return el;
+        }
+        
+        function clearInlineDetail() {
+            document.querySelectorAll('.threat-inline-detail').forEach(el => el.remove());
+            document.querySelectorAll('.threat-card.selected').forEach(c => c.classList.remove('selected'));
+            selectedConceptId = null;
+            selectedBlob = null;
+        }
+        
         async function selectThreatByBlob(blob) {
             document.querySelectorAll('.threat-card').forEach(c => c.classList.remove('selected'));
-            document.getElementById('detailSection').style.display = 'block';
+            if (blob.conceptId) {
+                const card = document.querySelector(`.threat-card[data-concept-id="${CSS.escape(blob.conceptId)}"]`);
+                if (card) card.classList.add('selected');
+            }
+            const detail = mountInlineDetail(blob);
+            if (!detail) return;
             
             const sentences = blob.sentences || [];
-            document.getElementById('detailContent').innerHTML = `
-                <div class="sentence-item"><strong>${blob.label}</strong></div>
+            detail.innerHTML = `
+                <div class="sentence-item"><strong>${escHtml(blob.label)}</strong></div>
                 <div class="sentence-item">Position: (${(blob.x * 100).toFixed(1)}%, ${(blob.y * 100).toFixed(1)}%) | Strength: ${(blob.strength || 0).toFixed(3)}</div>
-                ${sentences.map(s => `<div class="sentence-item">${s}</div>`).join('')}
+                ${sentences.map(s => `<div class="sentence-item">${escHtml(s)}</div>`).join('')}
                 ${!sentences.length ? '<div class="sentence-item">No sentences available for this concept.</div>' : ''}
                 <svg class="sparkline" id="detailSparkline" viewBox="0 0 100 28" preserveAspectRatio="none"></svg>
                 <div class="sentence-item" id="historyLabel" style="color:#666;">Loading history...</div>
@@ -1331,17 +2130,24 @@
             const evt = update.eventType || 'concept_evolved';
             const alert = update.alert || update.concept || {};
             const isNew = evt === 'new_concept';
+            const isEmerging = alert.emerging === true;
             const item = document.createElement('div');
-            item.className = 'feed-item' + (isNew ? ' new' : '');
+            item.className = 'feed-item' + (isNew ? ' new' : '') + (isEmerging ? ' emerging' : '');
             item.innerHTML = `
-                <div class="feed-label">${isNew ? '● New concept' : '▲ Concept evolved'}: ${escHtml(alert.summary || alert.label || alert.conceptId || 'unknown')}</div>
-                <div class="feed-meta">Strength: ${(alert.strength || 0).toFixed(3)} | ${alert.source || ''} | ${new Date(alert.detectedAt || Date.now()).toLocaleTimeString()}</div>
+                <div class="feed-label">${isNew ? '● New concept' : '▲ Concept evolved'}${isEmerging ? ' <span class="feed-emerging-tag">EMERGING</span>' : ''}: ${escHtml(alert.summary || alert.label || alert.conceptId || 'unknown')}</div>
+                <div class="feed-meta">Strength: ${(alert.strength || 0).toFixed(3)} | ${escHtml(alert.source || '')} | ${new Date(alert.detectedAt || Date.now()).toLocaleTimeString()}</div>
             `;
+            item.dataset.conceptId = alert.conceptId || '';
+            item.onclick = () => focusConcept(alert.conceptId);
             feed.prepend(item);
             while (feed.children.length > 30) feed.removeChild(feed.lastChild);
             
+            feedEventCount++;
             const badge = document.getElementById('feedBadge');
+            badge.textContent = feedEventCount + ' new';
             badge.style.display = 'inline-block';
+            
+            schedulePlaneRefresh();
         }
         
         function connectRealtime() {
@@ -1356,6 +2162,14 @@
             
             connection.on('ConceptUpdate', (update) => appendFeedItem(update));
             connection.on('ThreatAlert', (alert) => appendFeedItem({ eventType: 'new_concept', alert }));
+            connection.on('AnalysisProgress', (progress) => {
+                if (!progress || !progress.message) return;
+                setLoadingMessage(progress.message);
+                if (progress.stage === 'analyzing' || progress.stage === 'done') {
+                    const btn = document.getElementById('fetchBtn');
+                    if (btn.disabled) btn.textContent = 'Analyzing...';
+                }
+            });
             connection.on('Connected', (d) => {
                 document.getElementById('status').textContent = 'API: Ready';
             });
@@ -1368,23 +2182,89 @@
         function selectThreat(index) {
             const blob = blobs[index];
             if (!blob) return;
-            selectThreatByBlob(blob);
+            focusConcept(blob.conceptId);
         }
         
-        function selectThreatByBlob(blob) {
-            document.querySelectorAll('.threat-card').forEach(c => c.classList.remove('selected'));
-            
+        // ===== Pinned dot panel (appears on hover, fixed on click) =====
+        function sourceLinksHtml(blob) {
+            const links = (blob.sources || []).filter(s => s && safeUrl(s.url));
+            if (!links.length) return '';
+            const shown = links.slice(0, 5).map(s => {
+                const url = safeUrl(s.url);
+                let host = url;
+                try { host = new URL(url).hostname; } catch (err) {}
+                return `<a class="tt-src" href="${escHtml(url)}" target="_blank" rel="noopener">${escHtml(host)}</a>`;
+            });
+            const rest = links.length > shown.length ? `<span class="tt-src-more">+${links.length - shown.length}</span>` : '';
+            return `<div class="tt-sources"><span class="tt-src-label">Sources:</span> ${shown.join(' ')}${rest}</div>`;
+        }
+
+        function tooltipHtml(blob, full) {
             const sentences = blob.sentences || [];
-            document.getElementById('detailSection').style.display = 'block';
-            document.getElementById('detailContent').innerHTML = `
-                <div class="sentence-item"><strong>${blob.label}</strong></div>
-                <div class="sentence-item">Position: (${(blob.x * 100).toFixed(1)}%, ${(blob.y * 100).toFixed(1)}%) | Strength: ${(blob.strength || 0).toFixed(3)}</div>
-                ${sentences.map(s => `<div class="sentence-item">${s}</div>`).join('')}
-                ${!sentences.length ? '<div class="sentence-item">No sentences available for this concept.</div>' : ''}
+            const list = full ? sentences : sentences.slice(0, 3);
+            const sentencesHtml = list.map(s => `<div class="sentence">${escHtml(s)}</div>`).join('');
+            const moreText = !full && sentences.length > 3 ? `<div class="more">+${sentences.length - 3} more sentences...</div>` : '';
+            const head = full
+                ? `<div class="tt-head"><div class="concept-title">${escHtml(blob.label || 'Unknown Concept')}</div><button class="tt-close" id="ttClose" title="Pin / unpin (Esc)">×</button></div>`
+                : `<div class="concept-title">${escHtml(blob.label || 'Unknown Concept')}</div>`;
+            return `
+                ${head}
+                <div class="tt-body">
+                    <div class="concept-meta">Strength: ${(blob.strength || 0).toFixed(3)} | Documents: ${blob.docCount || 0}${blob.emerging ? ' | <span class="tooltip-emerging">EMERGING</span>' : ''}</div>
+                    ${sentencesHtml}
+                    ${moreText}
+                    ${sourceLinksHtml(blob)}
+                </div>
             `;
-            
+        }
+        
+        function showPinned() {
+            const blob = blobs.find(b => b.conceptId === pinnedId);
+            if (!blob) { unpinPanel(); return; }
+            const tooltip = document.getElementById('tooltip');
+            tooltip.classList.add('pinned');
+            tooltip.style.display = 'flex';
+            tooltip.style.left = Math.max(0, Math.min(pinnedPos.left, width - 340)) + 'px';
+            tooltip.style.top = Math.max(0, Math.min(pinnedPos.top, height - 120)) + 'px';
+            tooltip.innerHTML = tooltipHtml(blob, true);
+            const cbtn = document.getElementById('ttClose');
+            if (cbtn) cbtn.onclick = unpinPanel;
+        }
+        
+        function unpinPanel() {
+            pinnedId = null;
+            pinnedPos = null;
+            const tooltip = document.getElementById('tooltip');
+            tooltip.classList.remove('pinned');
+            tooltip.style.display = 'none';
+            tooltip.innerHTML = '';
             render();
         }
+        
+        const tooltipEl = document.getElementById('tooltip');
+        tooltipEl.addEventListener('mousedown', (e) => {
+            if (!tooltipEl.classList.contains('pinned')) return;
+            // Drag surface = header strip only; the body stays a normal
+            // selectable/copyable text area.
+            if (!e.target.closest('.tt-head') || e.target.closest('button')) return;
+            dragPanel = true;
+            dragOffX = e.clientX - tooltipEl.offsetLeft;
+            dragOffY = e.clientY - tooltipEl.offsetTop;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!dragPanel) return;
+            const board = tooltipEl.parentElement.getBoundingClientRect();
+            const x = Math.max(0, Math.min(e.clientX - board.left - dragOffX, board.width - tooltipEl.offsetWidth));
+            const y = Math.max(0, Math.min(e.clientY - board.top - dragOffY, board.height - 40));
+            tooltipEl.style.left = x + 'px';
+            tooltipEl.style.top = y + 'px';
+            pinnedPos = { left: x, top: y };
+        });
+        document.addEventListener('mouseup', () => { dragPanel = false; });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && pinnedId !== null) unpinPanel();
+        });
         
         // ===== Health Check =====
         async function checkHealth() {
@@ -1399,13 +2279,77 @@
             }
         }
         
+        // ===== Onboarding =====
+        const ONBOARDING_KEY = 'cycepta_onboarding_done_v1';
+        function showOnboarding() {
+            document.getElementById('onboarding').classList.add('active');
+        }
+        function closeOnboarding() {
+            try { localStorage.setItem(ONBOARDING_KEY, '1'); } catch (e) {}
+            document.getElementById('onboarding').classList.remove('active');
+        }
+
         // ===== Init =====
+        // ===== Panel collapse =====
+        const PANELS_KEY = 'cycepta_panels_v1';
+        function setPanel(side, collapsed) {
+            const c = document.querySelector('.container');
+            c.classList.toggle(side + '-collapsed', collapsed);
+            document.getElementById(side === 'left' ? 'toggleLeft' : 'toggleRight').textContent =
+                side === 'left' ? (collapsed ? '›' : '‹') : (collapsed ? '‹' : '›');
+            try {
+                const st = JSON.parse(localStorage.getItem(PANELS_KEY) || '{}');
+                st[side] = collapsed;
+                localStorage.setItem(PANELS_KEY, JSON.stringify(st));
+            } catch (err) {}
+        }
+        function initPanels() {
+            let st = {};
+            try { st = JSON.parse(localStorage.getItem(PANELS_KEY) || '{}'); } catch (err) {}
+            if (st.left) setPanel('left', true);
+            if (st.right) setPanel('right', true);
+        }
+        document.getElementById('toggleLeft').onclick = () =>
+            setPanel('left', !document.querySelector('.container').classList.contains('left-collapsed'));
+        document.getElementById('toggleRight').onclick = () =>
+            setPanel('right', !document.querySelector('.container').classList.contains('right-collapsed'));
+
+        // Keyboard layout independence: KeyA/KeyD are physical keys, so the
+        // shortcuts keep working on a Russian (or any other) keyboard layout.
+        function panelShortcutSide(event) {
+            if (!event || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return '';
+            const target = event.target;
+            if (target && (target.isContentEditable ||
+                /^(INPUT|TEXTAREA|SELECT)$/.test(String(target.tagName || '').toUpperCase()))) {
+                return '';
+            }
+            const key = String(event.key || '').toLowerCase();
+            if (event.code === 'KeyA' || key === 'a' || key === 'ф') return 'left';
+            if (event.code === 'KeyD' || key === 'd' || key === 'в') return 'right';
+            return '';
+        }
+
+        document.addEventListener('keydown', (event) => {
+            const side = panelShortcutSide(event);
+            if (!side) return;
+            const container = document.querySelector('.container');
+            setPanel(side, !container.classList.contains(side + '-collapsed'));
+        });
+        initPanels();
+
+        try { applyTheme(localStorage.getItem(THEME_KEY), false); } catch (err) { applyTheme('system', false); }
         resize();
         renderLegend();
         checkHealth();
         setInterval(checkHealth, 10000);
-        loadTimeline();
+        loadAllConcepts();
         connectRealtime();
+        document.getElementById('onboarding').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) closeOnboarding();
+        });
+        let onboardingSeen = false;
+        try { onboardingSeen = !!localStorage.getItem(ONBOARDING_KEY); } catch (e) {}
+        if (!onboardingSeen) showOnboarding();
     </script>
 </body>
 </html>

@@ -1,11 +1,7 @@
 using Serilog;
 using ThreatDetector.Api.Hubs;
 using ThreatDetector.Api.Services;
-using ThreatDetector.Parsing.Channels;
-using ThreatDetector.Parsing.Feeds.CveFeedParser;
-using ThreatDetector.Parsing.Feeds.CveFeedParser.CveFeedClient;
-using ThreatDetector.Parsing.Feeds.RssFeedParser;
-using ThreatDetector.Parsing.Feeds.RssFeedParser.RssFeedClient;
+using ThreatDetector.Parsing.Feeds;
 using ThreatDetector.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -24,54 +20,38 @@ builder.Services.AddSignalR();
 builder.Services.AddEndpointsApiExplorer();
 
 // HTTP clients with User-Agent
-builder.Services.AddHttpClient();
-
-// RSS feed named client ("ClientRssFeed") with Polly policies.
-// RssFeedParser resolves it through IHttpClientFactory, so these headers/policies apply.
-using (var loggerFactory = LoggerFactory.Create(logging => logging.AddSerilog(Log.Logger)))
+builder.Services.AddHttpClient<RssFeedParser>(client =>
 {
-    var rssLogger = loggerFactory.CreateLogger<RssClientClass>();
-    new RssClientClass(rssLogger).HttpclientFeedRss(builder.Services);
-}
-
-// NVD CVE feed named client ("ClientCveFeed") with Polly policies
-using (var loggerFactory = LoggerFactory.Create(logging => logging.AddSerilog(Log.Logger)))
+    client.DefaultRequestHeaders.Add("User-Agent", "ThreatDetector/1.0 (security research)");
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
-    new ClientClass(loggerFactory.CreateLogger<ClientClass>()).HttpclientFeedCve(builder.Services);
-}
-
-// Feed parsers (consumed by AnalyzeController)
-builder.Services.AddSingleton<RssFeedParser>();
-builder.Services.AddSingleton<CveFeedParser>();
-
-// Channel
-builder.Services.AddSingleton<DataIngestionChannel>(sp =>
-{
-    var logger = sp.GetRequiredService<ILogger<DataIngestionChannel>>();
-    return new DataIngestionChannel(logger, batchSize: 100, batchWindow: TimeSpan.FromMinutes(5));
+    // RssFeedParser validates each redirect target itself; the default handler
+    // would follow a public -> private bounce without giving us a look.
+    AllowAutoRedirect = false,
 });
-
-// NCD HTTP client
-builder.Services.AddSingleton<NcdHttpClient>(sp =>
+builder.Services.AddHttpClient<CveFeedParser>(client =>
 {
-    var ncdUrl = builder.Configuration["NcdService:Url"] ?? "http://localhost:5000";
-    var logger = sp.GetRequiredService<ILogger<NcdHttpClient>>();
-    return new NcdHttpClient(ncdUrl, logger);
+    client.DefaultRequestHeaders.Add("User-Agent", "ThreatDetector/1.0 (security research)");
 });
 
 // Persistence + real-time push
 builder.Services.AddSingleton<ThreatStorage>();
 builder.Services.AddSingleton<ConceptPersistenceService>();
 
-// Background services
-builder.Services.AddHostedService<BatchingService>();
-
-// CORS
+// CORS: the dashboard is same-origin, so only explicitly configured local
+// tooling origins are allowed. "*" + credentials is never a safe default.
+var allowedOrigins = (builder.Configuration["Cors:AllowedOrigins"]
+        ?? "http://localhost:5001,http://127.0.0.1:5001")
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+if (allowedOrigins.Length == 0)
+{
+    allowedOrigins = new[] { "http://localhost:5001", "http://127.0.0.1:5001" };
+}
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyMethod()
               .AllowAnyHeader();
     });
@@ -89,21 +69,5 @@ app.MapHub<ThreatHub>("/hubs/threat");
 // Health endpoint
 app.MapGet("/health", () => Results.Ok(new { status = "ok", timestamp = DateTime.UtcNow }));
 
-// Feed ingestion endpoint
-app.MapPost("/api/v1/ingest", async (
-    HttpContext context,
-    DataIngestionChannel channel) =>
-{
-    var documents = await context.Request.ReadFromJsonAsync<List<ThreatDetector.Models.ParsedDocument>>();
-    if (documents == null) return Results.BadRequest();
-
-    foreach (var doc in documents)
-    {
-        await channel.Writer.WriteAsync(doc);
-    }
-
-    return Results.Ok(new { accepted = documents.Count });
-});
-
-Log.Information("Threat Detector API starting on http://localhost:5001");
-app.Run("http://0.0.0.0:5001");
+Log.Information("Threat Detector API starting");
+app.Run();

@@ -1,9 +1,17 @@
 """Core NCD Engine - wraps the New Concept Detection pipeline for real-time use.
 
 Implements:
-  - k-NN novelty score in raw 768-dim embedding space (replaces np.maximum.reduce)
+  - k-NN novelty score in raw 768-dim embedding space (block-wise top-k over
+    a disk-backed per-period reference store; replaces np.maximum.reduce)
   - Cross-period concept tracking via Graph (ported from reference impl)
   - Periodic UMAP refit to prevent embedding-space drift
+  - N1.2 burst tier: second-pass clustering of the residual novelty pool
+    (novel units the primary pass did not absorb) into cohesion-guarded
+    "burst" concepts that skip the growth/recurrence gate
+  - N1.3 velocity gate: per-entity online change-point detector (two-sided
+    CUSUM on the standardized weekly member-inflow residual vs the entity's
+    own trailing baseline); emerging flags are the UNION (novelty OR
+    velocity). NCD_INFLOW_GATE=0 restores novelty-only behaviour.
 """
 from __future__ import annotations
 
@@ -21,21 +29,29 @@ def _patched_eigsh(A, k=6, **kwargs):
     return _original_eigsh(A, k=k, **kwargs)
 scipy.sparse.linalg.eigsh = _patched_eigsh
 
+import atexit
 import copy
+import hashlib
 import logging
+import os
 import re
+import shutil
+import tempfile
 import time
 import uuid
 from collections import defaultdict
 from datetime import datetime
-from typing import Optional
+from typing import Iterator, Optional
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from scipy.spatial import cKDTree
 from scipy.special import kl_div
 from skimage.feature import blob_log
 
 from .config import NcdConfig
+from .input_hygiene import is_boilerplate as _is_boilerplate
+from .judge import judge_documents
 from .models import (
     ConceptUpdate,
     DetectedConcept,
@@ -53,6 +69,20 @@ def _split_sentences(text: str) -> list[str]:
     """Split document text into sentence-level units (as in the NCD paper)."""
     parts = [p.strip() for p in _SENT_SPLIT_RE.split(text) if p.strip()]
     return parts or ([text.strip()] if text.strip() else [])
+
+
+def _stable_concept_id(sents: list[str], period_idx: int) -> str:
+    """Content-addressed concept id.
+
+    Random uuids made two replays of the same stream emit different ids (and
+    therefore incomparable metrics/config diffs). Seed, period and member
+    sentences are deterministic, so this id is reproducible while still
+    unique for concepts that start in different periods.
+    """
+    if not sents:
+        return uuid.uuid4().hex[:8]  # no sentences to hash: keep it unique
+    material = f"{period_idx}\n" + "\n".join(sorted(set(sents)))
+    return hashlib.blake2b(material.encode("utf-8"), digest_size=4).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +159,7 @@ class _ConceptGraph:
         self.start = start_index
         self.length = 1
         self.sents = list(start_sents)
-        self.concept_id = str(uuid.uuid4())[:8]
+        self.concept_id = _stable_concept_id(start_sents, start_index)
         self.first_novel = False
 
     def add_coord(self, coord, list_index, sents_to_add=None):
@@ -203,10 +233,224 @@ def _link_graphs_across_periods(all_blobs, bins_dicts, max_dist, max_gap):
     return result
 
 
+class _PeriodEmbeddingStore:
+    """Disk-backed append-only row store for per-period raw embeddings.
+
+    Replaces the old in-RAM `list[np.ndarray]` reference so that reference
+    bookkeeping stays O(1) in the number of periods (<= a few hundred KB of
+    RAM regardless of stream length; the vectors themselves live in a plain
+    float32 binary file). Rows are appended in period order, exactly the
+    arrays the engine used to keep in the list. Reads are either bounded
+    blocks (streamed for the block-wise k-NN novelty pass; RSS stays at one
+    block) or a single full read (only for paths that genuinely need the
+    whole matrix at once, e.g. a UMAP refit).
+
+    Layout: <dir>/vecs.bin - C-order float32 [n, dim]; dim is fixed by the
+    first append. The store is PER-RUN engine state, exactly like the in-RAM
+    list it replaces: it lives in a unique `run-<pid>-<rand>` subdirectory of
+    the base dir (env NCD_REF_STORE_DIR / WALLCLOCK_REF_DIR override; default
+    stream/data/ncd_state/ inside the repo when present, else the system temp
+    dir) and is removed on close()/process exit; stale run dirs of dead
+    processes are pruned opportunistically on open.
+    """
+
+    def __init__(self, directory: str):
+        self._dir = directory
+        self._path = os.path.join(directory, "vecs.bin")
+        os.makedirs(directory, exist_ok=True)
+        self._wf = open(self._path, "w+b")   # write handle (append-only)
+        self._rf = open(self._path, "rb")    # read handle (block streaming)
+        self._rows: list[int] = []           # rows per period (tiny)
+        self._n = 0                          # total rows
+        self.dim = 0                         # fixed by first append
+        self._closed = False
+        atexit.register(self.close)
+
+    # -- lifecycle / paths ---------------------------------------------------
+
+    @classmethod
+    def create(cls, directory: str | None = None) -> "_PeriodEmbeddingStore":
+        base = directory or os.environ.get("NCD_REF_STORE_DIR") \
+            or os.environ.get("WALLCLOCK_REF_DIR") or _default_ref_base_dir()
+        _prune_stale_ref_dirs(base)
+        run_dir = os.path.join(base, f"run-{os.getpid()}-{uuid.uuid4().hex[:6]}")
+        return cls(run_dir)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        for fh in (self._wf, self._rf):
+            try:
+                fh.close()
+            except OSError:
+                pass
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+    # -- writes --------------------------------------------------------------
+
+    def append(self, embeddings: np.ndarray) -> None:
+        """Append one period's raw embeddings (stored as-is, same bytes)."""
+        if self._closed:
+            raise RuntimeError("reference store is closed")
+        arr = np.ascontiguousarray(embeddings, dtype=np.float32)
+        if arr.ndim != 2:
+            raise ValueError(f"expected 2D embeddings, got shape {arr.shape}")
+        if self.dim == 0:
+            self.dim = int(arr.shape[1])
+        elif arr.shape[1] != self.dim:
+            raise ValueError(f"embedding dim changed: {arr.shape[1]} != {self.dim}")
+        self._wf.write(arr.tobytes())  # buffered handle -> full writes
+        self._wf.flush()
+        self._n += int(arr.shape[0])
+        self._rows.append(int(arr.shape[0]))
+
+    # -- reads ---------------------------------------------------------------
+
+    def __len__(self) -> int:
+        return self._n
+
+    def iter_blocks(self, block_rows: int) -> Iterator[np.ndarray]:
+        """Yield the stored rows as read-only float32 blocks (dim,).
+
+        Sequential file reads - unlike slicing one big memmap, touched pages
+        are freed after each block, so peak RSS stays at ~one block regardless
+        of total reference size.
+        """
+        if self._closed:
+            raise RuntimeError("reference store is closed")
+        self._rf.seek(0)
+        remaining = self._n
+        while remaining > 0:
+            take = min(block_rows, remaining)
+            data = self._rf.read(take * self.dim * 4)
+            if len(data) != take * self.dim * 4:
+                raise RuntimeError(
+                    f"reference store truncated: wanted {take * self.dim * 4} "
+                    f"bytes at {remaining - take}/{self._n} rows, got {len(data)}")
+            yield np.frombuffer(data, dtype=np.float32).reshape(take, self.dim)
+            remaining -= take
+
+    def read_all(self) -> np.ndarray:
+        """Read every stored row into one RAM matrix (fit-time paths only)."""
+        if self._closed:
+            raise RuntimeError("reference store is closed")
+        if self._n == 0:
+            return np.zeros((0, self.dim), dtype=np.float32)
+        arr = np.fromfile(self._path, dtype=np.float32,
+                          count=self._n * self.dim).reshape(self._n, self.dim)
+        if arr.shape[0] != self._n:
+            raise RuntimeError(f"reference store truncated: {arr.shape} != {self._n} rows")
+        return arr
+
+
+def _default_ref_base_dir() -> str:
+    """Default base dir for the engine's per-run reference store."""
+    pkg_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    candidate = os.path.join(pkg_root, "stream", "data", "ncd_state")
+    if os.path.isdir(os.path.dirname(candidate)):
+        return candidate
+    return os.path.join(tempfile.gettempdir(), "ncd_state")
+
+
+def _prune_stale_ref_dirs(base: str, max_age_s: float = 7200.0) -> None:
+    """Best-effort removal of run dirs left behind by killed processes.
+
+    A watchdog SIGKILL skips close()/atexit, so dirs can leak; a dir is stale
+    when its pid is dead or it has not been written to for max_age_s (live
+    engines append every period, keeping mtime fresh).
+    """
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return
+    now = time.time()
+    for name in names:
+        if not name.startswith("run-"):
+            continue
+        d = os.path.join(base, name)
+        pid_part = name[4:].split("-", 1)[0]
+        dead_pid = False
+        try:
+            os.kill(int(pid_part), 0)
+        except ProcessLookupError:
+            dead_pid = True
+        except (ValueError, PermissionError):
+            pass
+        stale = False
+        try:
+            stale = (now - os.stat(d).st_mtime) > max_age_s
+        except OSError:
+            continue
+        if dead_pid or stale:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class _InflowCUSUM:
+    """N1.3: online two-sided CUSUM change-point detector on a per-entity
+    weekly member-inflow series (OBSERVED inflows: one value per period the
+    entity was emitted; silent weeks carry no observation, which is what a
+    sporadic emitter's baseline requires).
+
+    Statistic, exact:
+
+        baseline mu/sigma = mean/population-std of the trailing `window`
+        observed inflows (the current value is excluded; the window may be
+        shorter early in the entity's life)
+        z_t   = (x_t - mu) / max(sigma, sigma_floor)      (standardized residual)
+        s_hi  = max(0, s_hi + z_t - k)                    (upward CUSUM, flags)
+        s_lo  = min(0, s_lo + z_t + k)                    (downward CUSUM, tracked
+                                                           for symmetry/telemetry,
+                                                           never flags)
+
+    A change point fires when s_hi > h AND the residual has been positive for
+    `confirm` consecutive observed updates ending at t (sustained confirmation:
+    a single spike, however large, cannot fire). On fire the statistic resets
+    (the engine additionally latches the flag - one flag per entity).
+    """
+
+    __slots__ = ("k", "h", "sigma_floor", "confirm", "s_hi", "s_lo", "pos_streak")
+
+    def __init__(self, k: float, h: float, sigma_floor: float, confirm: int):
+        self.k = float(k)
+        self.h = float(h)
+        self.sigma_floor = max(1e-6, float(sigma_floor))
+        self.confirm = max(1, int(confirm))
+        self.s_hi = 0.0
+        self.s_lo = 0.0
+        self.pos_streak = 0
+
+    def update(self, baseline_window: list[float], x: float) -> bool:
+        """Feed one period's inflow `x` with its trailing observed inflows.
+
+        Returns True exactly on the change-point crossing (then resets).
+        """
+        if baseline_window:
+            n = len(baseline_window)
+            mu = sum(baseline_window) / n
+            var = sum((v - mu) ** 2 for v in baseline_window) / n
+            sigma = var ** 0.5
+        else:
+            mu, sigma = 0.0, 0.0
+        z = (x - mu) / max(sigma, self.sigma_floor)
+        self.s_hi = max(0.0, self.s_hi + z - self.k)
+        self.s_lo = min(0.0, self.s_lo + z + self.k)
+        if z > 0:
+            self.pos_streak += 1
+        else:
+            self.pos_streak = 0
+        fire = self.s_hi > self.h and self.pos_streak >= self.confirm
+        if fire:
+            self.s_hi = 0.0
+            self.pos_streak = 0
+        return fire
+
+
 class NcdEngine:
     """Stateful NCD engine supporting incremental real-time concept detection."""
 
-    def __init__(self, config: NcdConfig | None = None):
+    def __init__(self, config: NcdConfig | None = None,
+                 ref_store_dir: str | None = None):
         self.config = config or NcdConfig()
         self._model = None
         self._reducer = None
@@ -224,8 +468,10 @@ class NcdEngine:
         # linking / concept tracking). Outliers are clipped to the edge bins.
         self._edges: list[np.ndarray] | None = None
 
-        # P0: raw 768-dim embeddings per period (for k-NN novelty)
-        self._period_raw_embeddings: list[np.ndarray] = []
+        # P0: raw 768-dim embeddings per period (for k-NN novelty). Kept in a
+        # disk-backed per-run store (same vectors, same order as the old
+        # in-RAM list) so reference bookkeeping costs O(1) RAM in #periods.
+        self._ref_store = _PeriodEmbeddingStore.create(ref_store_dir)
         self._period_sentences: list[list[str]] = []
 
         # P0: cross-period concept graphs
@@ -248,6 +494,24 @@ class NcdEngine:
 
         # P0: UMAP refit counter
         self._period_count = 0
+
+        # N1.3: per-entity weekly member-inflow change-point detector
+        # ("velocity gate"). All keys are primary concept_ids (stable across
+        # periods via graph tracking); burst-tier concepts get a fresh uuid
+        # per emission and are already flagged, so they never enter here.
+        self._entity_inflow: dict[str, dict[int, int]] = {}    # cid -> {period: new unique units}
+        self._entity_obs_inflow: dict[str, list[int]] = {}     # cid -> observed inflows (emission order)
+        self._entity_seen_units: dict[str, set[str]] = {}      # cid -> unique member units ever
+        self._entity_pos_weeks: dict[str, int] = defaultdict(int)  # observed inflows > 0
+        self._inflow_detectors: dict[str, _InflowCUSUM] = {}
+        self._velocity_flagged: set[str] = set()               # latched: one flag per entity
+        self._velocity_flags_total = 0
+        # N1.4 (node 1.2): debut fast-path telemetry (subset of velocity flags)
+        self._debut_flags_total = 0
+
+        # Garbage judge: only the first failure warns so a missing model never
+        # spams the ingest log on every batch.
+        self._judge_failed = False
 
         logger.info("NCD Engine initialized (model=%s, device=%s)", self.config.EMBEDDING_MODEL, self.config.DEVICE)
 
@@ -276,18 +540,27 @@ class NcdEngine:
                 self._reducer = umap.UMAP(
                     n_components=self.config.UMAP_N_COMPONENTS,
                     n_neighbors=min(15, len(embeddings) - 1),
+                    random_state=self.config.UMAP_RANDOM_STATE,
+                    n_jobs=self.config.UMAP_N_JOBS,
                     verbose=False,
                     low_memory=True,
                 )
-                # Refit on all accumulated raw embeddings
-                all_raw = np.concatenate(self._period_raw_embeddings + [embeddings])
-                self._reducer.fit(np.ascontiguousarray(all_raw, dtype=np.float32))
+                # Refit on all accumulated raw embeddings (streamed from the
+                # disk-backed reference store into one matrix - UMAP needs the
+                # full matrix only at fit time; the wallclock replay sets
+                # UMAP_REFIT_INTERVAL=0 so this path never runs there).
+                cur = np.ascontiguousarray(embeddings, dtype=np.float32)
+                parts = ([self._ref_store.read_all()] if len(self._ref_store) else []) + [cur]
+                all_raw = np.concatenate(parts) if len(parts) > 1 else parts[0]
+                self._reducer.fit(all_raw)
             return
 
         logger.info("Fitting UMAP reducer on %d embeddings", len(embeddings))
         self._reducer = umap.UMAP(
             n_components=self.config.UMAP_N_COMPONENTS,
             n_neighbors=min(15, len(embeddings) - 1),
+            random_state=self.config.UMAP_RANDOM_STATE,
+            n_jobs=self.config.UMAP_N_JOBS,
             verbose=False,
             low_memory=True,
         )
@@ -310,23 +583,72 @@ class NcdEngine:
     def _compute_novelty_scores(
         self,
         current_embeddings: np.ndarray,
-        reference_embeddings: np.ndarray | None,
+        reference_embeddings: np.ndarray | _PeriodEmbeddingStore | None,
     ) -> np.ndarray:
         """k-NN novelty score: mean cosine similarity to k nearest neighbors in reference.
 
         Low score = novel (new topic not seen before).
         Embeddings must be L2-normalized for cosine sim = dot product.
+
+        Block-wise rewrite of the old full `current @ reference.T` matrix:
+        the reference is iterated in blocks (env WALLCLOCK_NOVELTY_BLOCK,
+        default 16384 rows, further capped so the per-block similarity
+        matrix stays <= WALLCLOCK_NOVELTY_SIM_MB, default 32 MB) and a
+        running per-row top-k is maintained with np.partition per block.
+        The reference may be an in-RAM array (old
+        call signature) or the engine's disk-backed store, which is streamed
+        so peak RSS is one block regardless of reference size.
+
+        Bit-identity: every similarity value is computed by the same float32
+        sgemm dot products as before, and np.partition is exact selection, so
+        the final per-row top-k multiset is BIT-IDENTICAL to the old global
+        np.partition (verified on real data: max|diff| == 0 over sorted
+        per-row top-k). The mean over the k values is the same expression as
+        before; because np.partition leaves its output in an arbitrary order
+        and float32 summation is not associative, individual scores can differ
+        from the old code by <= ~1 float32 ULP (~2.4e-7 measured) - far below
+        any downstream rounding (novelty prints use %.3f, strengths round to
+        4 decimals; the only exact consumer is the novelty gate comparison).
         """
-        if reference_embeddings is None or len(reference_embeddings) == 0:
+        n_ref = len(reference_embeddings) if reference_embeddings is not None else 0
+        if n_ref == 0:
             return np.ones(len(current_embeddings))
 
-        n_ref = len(reference_embeddings)
         k = max(1, min(self.config.KNN_K, n_ref))
-        # Cosine similarity via dot product (embeddings are normalized)
-        sim_matrix = current_embeddings @ reference_embeddings.T  # (n_current, n_ref)
-        # For each current point, take top-k similarities and average
-        top_k = np.partition(-sim_matrix, k - 1, axis=1)[:, :k]
-        novelty_scores = (-top_k).mean(axis=1)  # mean similarity; low = novel
+        try:
+            block_rows = int(os.environ.get("WALLCLOCK_NOVELTY_BLOCK", "16384"))
+        except ValueError:
+            block_rows = 16384
+        try:
+            sim_cap_mb = float(os.environ.get("WALLCLOCK_NOVELTY_SIM_MB", "32"))
+        except ValueError:
+            sim_cap_mb = 32.0
+        # Cap the per-block similarity matrix (n_current x block_rows float32)
+        # so the transient stays bounded for large periods as well; the block
+        # only affects speed, never the values (selection is exact).
+        sim_cap_rows = max(k, int(sim_cap_mb * (1 << 20) // (4 * max(1, len(current_embeddings)))))
+        block_rows = max(k, min(block_rows, sim_cap_rows))
+
+        if isinstance(reference_embeddings, _PeriodEmbeddingStore):
+            blocks = reference_embeddings.iter_blocks(block_rows)
+        else:
+            blocks = (reference_embeddings[i:i + block_rows]
+                      for i in range(0, n_ref, block_rows))
+
+        # Running per-row top-k similarities; each merge keeps the k largest
+        # seen so far (unordered, as np.partition leaves them).
+        best: np.ndarray | None = None
+        for block in blocks:
+            sims = current_embeddings @ block.T  # (n_current, block_rows)
+            merged = sims if best is None else np.concatenate((best, sims), axis=1)
+            width = merged.shape[1]
+            if width > k:
+                # ascontiguousarray: copy out just the k winners so the wide
+                # partition output is freed instead of kept alive by the view
+                merged = np.ascontiguousarray(
+                    np.partition(merged, width - k, axis=1)[:, width - k:])
+            best = merged
+        novelty_scores = best.mean(axis=1)  # mean top-k similarity; low = novel
         return novelty_scores
 
     def _novelty_threshold(self) -> float:
@@ -398,6 +720,81 @@ class NcdEngine:
         if self._stable_blacklist:
             logger.info("Stable-topic suppression: blacklisted %d recurring concepts: %s",
                         len(self._stable_blacklist), sorted(self._stable_blacklist))
+
+    # ------------------------------------------------------------------
+    # N1.3: velocity gate (per-entity online inflow change-point detector)
+    # ------------------------------------------------------------------
+    def _velocity_flag(self, concept_id: str, period_idx: int, new_units: int) -> bool:
+        """Update one entity's observed weekly inflow series and test its
+        two-sided CUSUM for a change point (see _InflowCUSUM for the exact
+        statistic).
+
+        `new_units` = number of UNIQUE member units (sentences) the entity
+        accrued this period - the engine's observable member inflow; the
+        baseline is built from the entity's OBSERVED inflows (emission
+        periods), so sporadic emitters are not diluted by silent weeks.
+        Returns True at most once per entity (the flag latches), on the
+        period the sustained excess first crosses the decision threshold.
+        Precision guards before the statistic even runs: INFLOW_WARMUP prior
+        observed inflows, INFLOW_MIN_CUM_UNITS cumulative unique units, and
+        at least two observed inflows > 0.
+
+        N1.4 (node 1.2) debut fast-path: if this is the entity's FIRST
+        observed inflow and it already reaches INFLOW_DEBUT unique units,
+        flag immediately - no warmup, no confirmation. Rationale: the CUSUM
+        path needs >= WARMUP+1 observed emissions plus CONFIRM sustained
+        updates, which is always later than mass adoption (40 members within
+        8 weeks) on fast ramps; a large debut week IS the pre-adoption
+        evidence. INFLOW_DEBUT=0 disables the fast path exactly.
+        """
+        cfg = self.config
+        series = self._entity_inflow.setdefault(concept_id, {})
+        series[period_idx] = new_units
+        obs = self._entity_obs_inflow.setdefault(concept_id, [])
+        if new_units > 0:
+            self._entity_pos_weeks[concept_id] += 1
+        eligible = (
+            concept_id not in self._velocity_flagged
+            and len(obs) >= cfg.INFLOW_WARMUP
+            and len(self._entity_seen_units.get(concept_id, ())) >= cfg.INFLOW_MIN_CUM_UNITS
+            and self._entity_pos_weeks[concept_id] >= 2
+        )
+        fire = False
+        if (
+            cfg.INFLOW_DEBUT > 0
+            and concept_id not in self._velocity_flagged
+            and not obs                      # first observed inflow == debut
+            and new_units >= cfg.INFLOW_DEBUT
+        ):
+            # Debut fast-path: one-shot latch shared with the CUSUM path,
+            # so a latched entity never fires a second time.
+            fire = True
+            self._velocity_flagged.add(concept_id)
+            self._velocity_flags_total += 1
+            self._debut_flags_total += 1
+            logger.info(
+                "Period %d: DEBUT fast-path flag on entity %s "
+                "(first inflow=%d >= %d)",
+                period_idx, concept_id, new_units, cfg.INFLOW_DEBUT,
+            )
+        elif eligible:
+            det = self._inflow_detectors.get(concept_id)
+            if det is None:
+                det = self._inflow_detectors[concept_id] = _InflowCUSUM(
+                    cfg.INFLOW_CUSUM_K, cfg.INFLOW_CUSUM_H,
+                    cfg.INFLOW_SIGMA_FLOOR, cfg.INFLOW_CONFIRM)
+            fire = det.update(obs[-cfg.INFLOW_WINDOW:], float(new_units))
+            if fire:
+                self._velocity_flagged.add(concept_id)
+                self._velocity_flags_total += 1
+                logger.info(
+                    "Period %d: velocity change point on entity %s "
+                    "(inflow=%d, cum_units=%d, baseline=%s)",
+                    period_idx, concept_id, new_units,
+                    len(self._entity_seen_units.get(concept_id, ())),
+                    [int(v) for v in obs[-cfg.INFLOW_WINDOW:]])
+        obs.append(new_units)
+        return fire
 
     def _create_heatmap(
         self,
@@ -578,6 +975,165 @@ class NcdEngine:
         except Exception:
             return 0
 
+    # ------------------------------------------------------------------
+    # N1.2: second-pass residual novelty clustering ("burst tier")
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _bin_width(edges: list[np.ndarray]) -> float:
+        """Mean histogram bin width expressed in raw 2D-coordinate units."""
+        widths = [float(e[1] - e[0]) for e in edges if len(e) > 1]
+        return float(np.mean(widths)) if widths else 1.0
+
+    @staticmethod
+    def _burst_components(points: np.ndarray, eps: float) -> list[list[int]]:
+        """Connected components of 2D points under Euclidean distance <= eps.
+
+        Single-linkage components (union-find over the k-d tree radius graph):
+        a slow-arriving topic whose units sit on one spot links up even when
+        individual units jitter by more than eps from each other.
+        """
+        n = len(points)
+        parent = list(range(n))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i: int, j: int) -> None:
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[ri] = rj
+
+        for i, j in cKDTree(points).query_pairs(eps):
+            union(i, j)
+
+        grouped: dict[int, list[int]] = defaultdict(list)
+        for i in range(n):
+            grouped[find(i)].append(i)
+        # deterministic order: largest components first, then by smallest index
+        return sorted(grouped.values(), key=lambda v: (-len(v), v[0]))
+
+    @staticmethod
+    def _mean_pairwise_cosine(x: np.ndarray) -> float:
+        """Mean pairwise cosine similarity of the rows (0.0 for < 2 rows)."""
+        if len(x) < 2:
+            return 0.0
+        norms = np.linalg.norm(x, axis=1, keepdims=True)
+        xn = x / np.where(norms > 1e-9, norms, 1.0)
+        sim = xn @ xn.T
+        return float((sim.sum() - np.trace(sim)) / (len(x) * (len(x) - 1)))
+
+    def _emit_burst_concepts(
+        self,
+        *,
+        units: list[str],
+        unit_to_doc: list[int],
+        raw_embeddings: np.ndarray,
+        embeddings_2d: np.ndarray,
+        novelty_scores: np.ndarray,
+        novelty_gate: float,
+        absorbed: set[int],
+        edges: list[np.ndarray],
+        period_idx: int,
+        period_id: str,
+        docs: list[Document],
+    ) -> list[DetectedConcept]:
+        """Second pass over the RESIDUAL novelty pool.
+
+        Units whose novelty is below the gate but which the primary pass did
+        NOT absorb into any emitted concept are re-clustered with connected
+        components in the existing 2D embedding space. Cohesive, sufficiently
+        large, document-diverse components are emitted as "burst" concepts
+        flagged WITHOUT the growth/recurrence gate -- the cohort-growth gate
+        structurally drops late-appearing decaying topics (their first period
+        never produces a blob, so no graph is ever "first novel"), while a
+        first-sight burst is exactly what such topics look like. The
+        cohesion + min-size + min-source guards keep scattered noise out.
+        """
+        cfg = self.config
+        residual = np.array(
+            [i for i in range(len(novelty_scores))
+             if novelty_scores[i] < novelty_gate and i not in absorbed],
+            dtype=np.int64,
+        )
+        if len(residual) < max(2, cfg.BURST_MIN_SIZE):
+            return []
+        if len(residual) > cfg.BURST_MAX_RESIDUAL:
+            logger.info("Burst tier: residual pool %d exceeds cap %d; skipping pass",
+                        len(residual), cfg.BURST_MAX_RESIDUAL)
+            return []
+
+        eps = cfg.BURST_EPS_BINS * self._bin_width(edges)
+        components = self._burst_components(embeddings_2d[residual], eps)
+
+        emitted: list[DetectedConcept] = []
+        for comp in components:
+            member_idx = sorted(int(i) for i in residual[comp])
+            if len(member_idx) < cfg.BURST_MIN_SIZE:
+                continue
+            docs_in_comp = {unit_to_doc[i] for i in member_idx if i < len(unit_to_doc)}
+            if len(docs_in_comp) < cfg.BURST_MIN_SOURCES:
+                continue
+            cohesion = self._mean_pairwise_cosine(raw_embeddings[member_idx])
+            if cohesion < cfg.BURST_COHESION:
+                continue
+
+            sentences = [units[i] for i in member_idx if i < len(units)]
+            if not sentences:
+                continue
+            mean_px = (float(embeddings_2d[member_idx, 0].mean()),
+                       float(embeddings_2d[member_idx, 1].mean()))
+            cx = self._bin_coord(mean_px[1], 1, edges)
+            cy = self._bin_coord(mean_px[0], 0, edges)
+            member_novelty = float(np.mean(novelty_scores[member_idx]))
+
+            concept = DetectedConcept(
+                concept_id=_stable_concept_id(sentences, period_idx),
+                label=sentences[0][:60],
+                summary=" ".join(sentences)[:300],
+                sentences=sentences[: cfg.MAX_SENTENCES_PER_CONCEPT],
+                first_seen=datetime.utcnow(),
+                last_seen=datetime.utcnow(),
+                document_count=len(docs_in_comp),
+                document_ids=[docs[i].id for i in sorted(docs_in_comp) if i < len(docs)],
+                strength=round(1.0 - member_novelty, 4),
+                coordinates=[cx, cy],
+                source=period_id,
+                emerging=True,   # burst tier: cohesion replaces the recurrence gate
+                appearances=1,
+            )
+            emitted.append(concept)
+            logger.info(
+                "Period %s: burst concept %s size=%d docs=%d cohesion=%.2f "
+                "novelty=%.3f coord=[%d,%d]",
+                period_id, concept.concept_id, len(member_idx), len(docs_in_comp),
+                cohesion, member_novelty, cx, cy,
+            )
+        return emitted
+
+    def _judge_filter(self, docs: list[Document]) -> list[Document]:
+        """Drop whole documents the LLM judges junk; pass through on any failure."""
+        if not self.config.JUDGE_ENABLED or not docs:
+            return docs
+        try:
+            verdicts = judge_documents([d.text for d in docs])
+        except Exception:
+            if not self._judge_failed:
+                self._judge_failed = True
+                logger.warning("garbage judge unavailable, pass-through")
+            else:
+                logger.debug("garbage judge unavailable, pass-through")
+            return docs
+        if verdicts is None:
+            return docs
+        kept = [d for d, v in zip(docs, verdicts) if not v[0] or v[1] < self.config.JUDGE_THRESHOLD]
+        dropped = len(docs) - len(kept)
+        if dropped > 0:
+            logger.info("judge dropped %d/%d documents", dropped, len(docs))
+        return kept
+
     def process_batch(self, batch: DocumentBatch) -> DetectionResult:
         """Process a batch of documents and detect emerging concepts."""
         start = time.time()
@@ -586,12 +1142,22 @@ class NcdEngine:
         docs = batch.documents
         period_id = batch.period_id or f"period_{len(self._period_ids)}"
 
+        # Judge before the split: dropped docs never produce units, and
+        # unit_to_doc / document_ids indices refer to the filtered list.
+        docs = self._judge_filter(docs)
+
         # Step 1: Split documents into sentence-level units
         if self.config.SENTENCE_LEVEL:
             units: list[str] = []
             unit_to_doc: list[int] = []
+            batch_seen: set[str] = set()
             for di, doc in enumerate(docs):
                 for s in _split_sentences(doc.text):
+                    # Syndicated stories repeat one sentence across several
+                    # docs inside a single batch; keep one unit for them.
+                    if _is_boilerplate(s) or s in batch_seen:
+                        continue
+                    batch_seen.add(s)
                     units.append(s)
                     unit_to_doc.append(di)
         else:
@@ -607,11 +1173,7 @@ class NcdEngine:
 
         # P0: store raw embeddings for k-NN novelty
         raw_embeddings = embeddings.copy()
-        has_reference_embeddings = bool(self._period_raw_embeddings)
-        if has_reference_embeddings:
-            ref_embeddings = np.concatenate(self._period_raw_embeddings)
-        else:
-            ref_embeddings = None
+        has_reference_embeddings = len(self._ref_store) > 0
 
         # Step 3: Dimensionality reduction (with periodic refit)
         self._ensure_reducer_fitted(embeddings)
@@ -631,8 +1193,11 @@ class NcdEngine:
         diff_heatmap_smoothed = gaussian_filter(diff_heatmap, sigma=self.config.SMOOTH_SIGMA)
 
         # P0: compute novelty scores for this period's embeddings (used by the
-        # GMM novel-only clustering below and by concept extraction in step 6)
-        novelty_scores = self._compute_novelty_scores(raw_embeddings, ref_embeddings)
+        # GMM novel-only clustering below and by concept extraction in step 6).
+        # The reference is streamed block-wise from the disk-backed store
+        # (same vectors/order as the old in-RAM concatenate).
+        novelty_scores = self._compute_novelty_scores(
+            raw_embeddings, self._ref_store if has_reference_embeddings else None)
         self._record_novelty_pool(novelty_scores)
         novelty_gate = self._novelty_threshold()
 
@@ -677,11 +1242,16 @@ class NcdEngine:
         period_idx = len(self._period_ids)
         new_concepts: list[DetectedConcept] = []
         concept_updates: list[ConceptUpdate] = []
+        velocity_flags_period = 0   # N1.3: velocity-gate flags fired this period
+        # N1.2: units the primary pass turned into a concept ("absorbed");
+        # everything novel but unabsorbed is the burst-tier residual pool.
+        absorbed_units: set[int] = set()
 
         for group in groups:
             unit_idx = set(group)
             if not unit_idx:
                 continue
+            absorbed_units.update(unit_idx)
 
             sentences = [units[i] for i in unit_idx if i < len(units)]
             if not sentences:
@@ -754,6 +1324,22 @@ class NcdEngine:
                 and growth >= self.config.GROWTH_THRESHOLD
                 and not blacklisted
             )
+            # N1.3: velocity gate - union with the novelty gate (emerging =
+            # novelty-emerging OR inflow change point). The entity's weekly
+            # inflow is the count of NEW unique member units it accrued this
+            # period; novelty math above is untouched.
+            if self.config.INFLOW_GATE:
+                seen = self._entity_seen_units.get(concept_id)
+                if seen is None:
+                    seen = self._entity_seen_units[concept_id] = set()
+                new_units = 0
+                for s in sentences:
+                    if s not in seen:
+                        seen.add(s)
+                        new_units += 1
+                if self._velocity_flag(concept_id, period_idx, new_units):
+                    emerging = True
+                    velocity_flags_period += 1
             if period_idx < self.config.STABLE_WARMUP_PERIODS:
                 self._stable_frequency[concept_id] += 1
 
@@ -765,6 +1351,7 @@ class NcdEngine:
                 first_seen=datetime.utcnow(),
                 last_seen=datetime.utcnow(),
                 document_count=len(doc_set),
+                document_ids=[docs[i].id for i in doc_set if i < len(docs)],
                 strength=round(strength, 4),
                 coordinates=[cx, cy],
                 source=period_id,
@@ -775,6 +1362,30 @@ class NcdEngine:
 
             event_type = "new_concept" if is_novel else "concept_evolved"
             concept_updates.append(ConceptUpdate(event_type=event_type, concept=concept))
+
+        # Step 6b (N1.2): second-pass residual novelty clustering ("burst tier").
+        # Novel units that no primary concept absorbed are re-clustered
+        # (connected components in the 2D embedding space) and emitted as burst
+        # concepts WITHOUT the growth/recurrence gate; cohesion + min-size +
+        # min-source guards reject scattered noise.
+        burst_concepts: list[DetectedConcept] = []
+        if self.config.BURST_TIER and has_reference_embeddings:
+            burst_concepts = self._emit_burst_concepts(
+                units=units,
+                unit_to_doc=unit_to_doc,
+                raw_embeddings=raw_embeddings,
+                embeddings_2d=embeddings_2d,
+                novelty_scores=novelty_scores,
+                novelty_gate=novelty_gate,
+                absorbed=absorbed_units,
+                edges=edges,
+                period_idx=period_idx,
+                period_id=period_id,
+                docs=docs,
+            )
+            for concept in burst_concepts:
+                new_concepts.append(concept)
+                concept_updates.append(ConceptUpdate(event_type="new_concept", concept=concept))
 
         # Step 7: Update state
         # P2/A: finalize stable-topic blacklist once the warmup window has elapsed
@@ -800,7 +1411,7 @@ class NcdEngine:
             drift = 0.0
 
         # P0: store raw embeddings and sentences for future k-NN
-        self._period_raw_embeddings.append(raw_embeddings)
+        self._ref_store.append(raw_embeddings)
         self._period_sentences.append(units)
 
         processing_time = (time.time() - start) * 1000
@@ -822,6 +1433,8 @@ class NcdEngine:
                 "nonzero_bins": int(np.count_nonzero(diff_heatmap)),
                 "units": len(units),
                 "novel_concepts": sum(1 for c in new_concepts if c.emerging),
+                "velocity_flags": velocity_flags_period,
+                "burst_concepts": len(burst_concepts),
                 "drift": round(drift, 4),
                 "drift_alert": drift_alert,
                 "cluster_mode": self.config.CLUSTER_MODE,
@@ -831,6 +1444,16 @@ class NcdEngine:
     def get_all_concepts(self) -> list[DetectedConcept]:
         """Return all detected concepts."""
         return self._detected_concepts
+
+    def close(self):
+        """Release engine resources (disk-backed reference store).
+
+        Idempotent; also registered via atexit inside the store so killed-or-
+        forgotten processes do not keep the per-run directory open. The
+        SentenceTransformer is NOT released here: embeddings are interleaved
+        with replay, so the model may still be needed by a later batch.
+        """
+        self._ref_store.close()
 
     def get_stats(self) -> dict:
         """Return engine statistics."""
@@ -850,6 +1473,12 @@ class NcdEngine:
             "last_drift": round(self._drift_history[-1], 4) if self._drift_history else 0.0,
             "drift_max": round(max(self._drift_history), 4) if self._drift_history else 0.0,
             "drift_count": len(self._drift_history),
+            # N1.3/N1.4: velocity-gate telemetry
+            "inflow_gate": self.config.INFLOW_GATE,
+            "inflow_debut": self.config.INFLOW_DEBUT,
+            "velocity_flagged_entities": len(self._velocity_flagged),
+            "velocity_flags_total": self._velocity_flags_total,
+            "debut_flags_total": self._debut_flags_total,
         }
 
 

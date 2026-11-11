@@ -34,12 +34,19 @@ junit*.xml
 
 # --- ML / model caches (runtime downloads) ---
 **/ncdbody/models/
+models/
+*.gguf
+*.safetensors
 .ncd/
 .cache/
 huggingface_cache/
 .hf/
 .kaggle/
 wandb/
+
+# --- Vendored research checkouts (local only, never part of the product) ---
+turboquant_plus/
+llama-cpp-turboquant/
 
 # --- .NET ---
 **/bin/
@@ -55,6 +62,17 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-store/
 .vite/
+
+# --- Secrets / local environment ---
+# Never commit real API keys or deployment secrets. Keep the tracked template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
 
 # --- DB / data ---
 threats.db
@@ -72,3 +90,21 @@ threats.db
 *.swo
 *~
 .thumbnails
+
+# --- Arbor wallclock run artifacts (large / regenerable) ---
+stream/cache/
+stream/data/emb_cache.npz
+stream/data/emb_cache.npz.migrated
+stream/data/emb_store/
+stream/data/ncd_state/
+stream/data/*.tmp.npz
+
+# --- Research session artifacts and local data (never committed) ---
+.arbor/
+ARBOR_CONTRACT.md
+experiments/
+stream/*.log
+stream/data/*.csv
+stream/data/kev.json
+stream/data/baseline_*.json
+stream/data/manifest.json

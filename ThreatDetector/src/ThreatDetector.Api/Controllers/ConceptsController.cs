@@ -20,16 +20,49 @@ public class ConceptsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetConcepts([FromQuery] int limit = 50)
     {
-        var concepts = await _storage.GetRecentConceptsAsync(limit);
-        return Ok(new { concepts, total = concepts.Count });
+        // Bound caller-controlled paging: an unbounded limit lets one request
+        // serialize the whole concept table.
+        var concepts = await _storage.GetRecentConceptsAsync(Math.Clamp(limit, 1, 1000));
+        var links = await _storage.GetConceptDocumentsAsync(concepts.Select(c => c.ConceptId));
+
+        var items = concepts.Select(c =>
+        {
+            List<object> documents = new();
+            if (links.TryGetValue(c.ConceptId, out var linkList))
+            {
+                documents = linkList
+                    .Where(l => !string.IsNullOrWhiteSpace(l.Url))
+                    .GroupBy(l => l.Url)
+                    .Select(g => new { url = g.Key, source = g.First().Source })
+                    .Take(12)
+                    .Cast<object>()
+                    .ToList();
+            }
+
+            return new
+            {
+                ConceptId = c.ConceptId,
+                Label = c.Label,
+                Summary = c.Summary,
+                Sentences = c.Sentences,
+                FirstSeen = c.FirstSeen,
+                LastSeen = c.LastSeen,
+                DocumentCount = c.DocumentCount,
+                Strength = c.Strength,
+                Coordinates = c.Coordinates,
+                Source = c.Source,
+                Emerging = c.Emerging,
+                Documents = documents,
+            };
+        });
+
+        return Ok(new { concepts = items, total = concepts.Count });
     }
 
     [HttpGet("{id}")]
     public async Task<IActionResult> GetConcept(string id)
     {
-        var recent = await _storage.GetRecentConceptsAsync(limit: 5000);
-        var concept = recent.FirstOrDefault(c =>
-            string.Equals(c.ConceptId, id, StringComparison.OrdinalIgnoreCase));
+        var concept = await _storage.GetConceptAsync(id);
         if (concept is null)
         {
             return NotFound(new { error = "Concept not found", conceptId = id });
@@ -49,7 +82,7 @@ public class ConceptsController : ControllerBase
     [HttpGet("periods")]
     public async Task<IActionResult> GetPeriods([FromQuery] int limit = 1000)
     {
-        var periods = await _storage.GetPeriodsAsync(limit);
+        var periods = await _storage.GetPeriodsAsync(Math.Clamp(limit, 1, 1000));
         return Ok(new { periods, total = periods.Count });
     }
 }

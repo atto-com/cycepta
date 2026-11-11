@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 
 # =============================================================
-#  Concepta — единый образ: Python NCD + .NET ThreatDetector API
-#  2 процесса в одном контейнере (supervisor-шелл /entrypoint.sh)
+#  Cycepta — single image: Python NCD service + .NET ThreatDetector API
+#  2 processes in one container (supervisor shell /entrypoint.sh)
 # =============================================================
 
-# ---- Стадия 1: сборка .NET API ----
+# ---- Stage 1: build the .NET API ----
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS api-build
 WORKDIR /src
 
@@ -24,11 +24,11 @@ COPY ThreatDetector/src/ThreatDetector.Api/ ThreatDetector/src/ThreatDetector.Ap
 RUN dotnet publish ThreatDetector/src/ThreatDetector.Api/ThreatDetector.Api.csproj \
     -c Release -o /app/out
 
-# ---- Стадия 2: runtime python + .NET runtime ----
+# ---- Stage 2: python + .NET runtime ----
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 
-# Инструменты + libicu (нужен .NET runtime) + ASP.NET Core 10 runtime
+# Tools + libicu (required by .NET) + ASP.NET Core 10 runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates libicu-dev \
  && rm -rf /var/lib/apt/lists/* \
@@ -38,27 +38,43 @@ RUN apt-get update \
 ENV PATH="/usr/share/dotnet:${PATH}"
 ENV DOTNET_ROOT=/usr/share/dotnet
 
-# CPU-only torch отдельно (иначе PyPI тянет ГБы CUDA-библиотек)
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+# CPU-only torch installed separately (PyPI would pull GBs of CUDA libs).
+# Pinned so image builds stay reproducible; bump together with requirements.
+RUN pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 
-# Python-зависимости NCD
+# NCD Python dependencies
 COPY ncdbody/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Код NCD + собранный API + entrypoint
+# NCD code, built API and entrypoint
 COPY ncdbody/app ./ncdbody/app
+# Provider registry lives next to the app package (ncdbody/llm_providers.yaml);
+# without it the container silently exposes only the default local model.
+COPY ncdbody/llm_providers.yaml ./ncdbody/llm_providers.yaml
 COPY --from=api-build /app/out ./api
 COPY docker-entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh && mkdir -p /data
+
+# Run as an unprivileged user. /app must be writable for the HuggingFace cache
+# and Python bytecode; /data is the persistent SQLite volume.
+RUN groupadd --system app \
+ && useradd --system --gid app --create-home app \
+ && mkdir -p /data /home/app/.ncd/models \
+ && chmod +x /entrypoint.sh \
+ && chown -R app:app /app /data /home/app
 
 # NCD
 ENV NCD_DEVICE=cpu
 ENV NUMBA_NUM_THREADS=1
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV NCD_MODEL_CACHE=/home/app/.ncd/models
 # API
-ENV NcdService__Url=http://localhost:8080
+ENV NcdService__Url=http://127.0.0.1:8080
 ENV THREAT_DB_PATH=/data/threats.db
 ENV ASPNETCORE_HTTP_PORTS=5001
+ENV HOME=/home/app
+
+USER app
 
 EXPOSE 8080 5001
 ENTRYPOINT ["/entrypoint.sh"]

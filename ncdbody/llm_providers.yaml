@@ -1,0 +1,33 @@
+# LLM providers for Generate Summaries. Local entries are model dirs with
+# safetensors loadable by mlx_lm or transformers (relative paths resolve
+# against ncdbody/). API entries default to the OpenAI chat-completions
+# format; set `format: anthropic` for the Anthropic Messages API. The key
+# comes from the request first, then the key_env environment var.
+local:
+  # A local entry without a path means the default model chain (env-driven
+  # NCD_LLM_MODEL); weights ship separately, see QUICK_START.md.
+  - name: Granite 4.0 1B (transformers)
+    # Approximate safetensors download; the dashboard shows the actual size
+    # when the weights are present and this hint when they are not.
+    size_hint: "~3.3 GB"
+api:
+  - name: OpenAI
+    base_url: https://api.openai.com/v1
+    model: gpt-4o-mini
+    key_env: OPENAI_API_KEY
+  - name: Groq
+    base_url: https://api.groq.com/openai/v1
+    model: llama-3.3-70b-versatile
+    key_env: GROQ_API_KEY
+  - name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
+    model: openai/gpt-4o-mini
+    key_env: OPENROUTER_API_KEY
+  # Anthropic uses its Messages API (`format: anthropic`), not the
+  # OpenAI-compatible /chat/completions shape. Change `model` to any
+  # Claude model available to your account.
+  - name: Anthropic
+    base_url: https://api.anthropic.com/v1
+    model: claude-sonnet-4-5
+    key_env: ANTHROPIC_API_KEY
+    format: anthropic

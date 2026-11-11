@@ -20,9 +20,23 @@ ncdbody/models/
 *.db
 threats.db
 
+# Secrets and local environment files
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+
 # OS
 .DS_Store
 
-# Tooling
+# Tooling and research data (never part of the runtime image)
 benchmark/
+stream/
+tests/
+.arbor/
+experiments/
 .devcontainer/
+*.npz

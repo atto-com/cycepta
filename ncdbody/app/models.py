@@ -40,6 +40,7 @@ class DetectedConcept(BaseModel):
     first_seen: datetime
     last_seen: datetime
     document_count: int = 0
+    document_ids: list[str] = Field(default_factory=list, description="Ids of documents whose sentences are members of this concept")
     strength: float = Field(0.0, ge=0.0, description="Detection strength/confidence")
     coordinates: list[float] = Field(default_factory=list, description="Position in embedding space")
     source: str = ""

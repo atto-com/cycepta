@@ -6,29 +6,68 @@ using ThreatDetector.Models;
 
 namespace ThreatDetector.Storage;
 
+/// <summary>
+/// Member-document source link for one concept (dashboard "documents" field).
+/// Accumulates across periods: INSERT OR IGNORE, rows are never deleted.
+/// </summary>
+public sealed record ConceptDocumentRow(string ConceptId, string DocId, string Url, string Source);
+
 public class ThreatStorage : IDisposable
 {
-    private readonly SqliteConnection _connection;
-    private readonly string _dbPath;
+    // SQLite connections are not thread-safe. The API is a singleton and is
+    // hit concurrently by the batching service, SignalR pushes and request
+    // handlers, so every operation opens its own short-lived connection
+    // instead of sharing one long-lived connection.
+    private readonly string _connectionString;
 
     public ThreatStorage(string? dbPath = null)
     {
-        _dbPath = dbPath
+        var path = dbPath
             ?? Environment.GetEnvironmentVariable("THREAT_DB_PATH")
             ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "ThreatDetector",
                 "threats.db");
 
-        Directory.CreateDirectory(Path.GetDirectoryName(_dbPath)!);
-        _connection = new SqliteConnection($"Data Source={_dbPath}");
-        _connection.Open();
+        path = Path.GetFullPath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        _connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            // Wait for a competing writer instead of throwing "database is
+            // locked" on the first contention.
+            DefaultTimeout = 10,
+        }.ToString();
         InitializeDatabase();
+    }
+
+    private SqliteConnection CreateConnection() => new(_connectionString);
+
+    private static void ConfigureConnection(SqliteConnection connection)
+    {
+        // journal_mode lives in the database header, but synchronous is a
+        // per-connection setting: without this every short-lived connection
+        // would silently fall back to FULL.
+        connection.Execute("PRAGMA synchronous=NORMAL;");
+    }
+
+    private async Task<SqliteConnection> OpenConnectionAsync()
+    {
+        var connection = CreateConnection();
+        await connection.OpenAsync();
+        ConfigureConnection(connection);
+        return connection;
     }
 
     private void InitializeDatabase()
     {
-        _connection.Execute(@"
+        using var connection = CreateConnection();
+        connection.Open();
+        // WAL lets readers proceed during a write; NORMAL is the standard
+        // durability/throughput trade-off for a WAL database.
+        connection.Execute("PRAGMA journal_mode=WAL;");
+        ConfigureConnection(connection);
+        connection.Execute(@"
             CREATE TABLE IF NOT EXISTS documents (
                 id TEXT PRIMARY KEY,
                 text TEXT NOT NULL,
@@ -64,6 +103,9 @@ public class ThreatStorage : IDisposable
             CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source);
             CREATE INDEX IF NOT EXISTS idx_documents_timestamp ON documents(timestamp);
             CREATE INDEX IF NOT EXISTS idx_concepts_first_seen ON concepts(first_seen);
+            CREATE INDEX IF NOT EXISTS idx_concepts_created ON concepts(created_at);
+            CREATE INDEX IF NOT EXISTS idx_concept_events_concept
+                ON concept_events(concept_id, created_at);
 
             CREATE TABLE IF NOT EXISTS periods (
                 period_id TEXT PRIMARY KEY,
@@ -80,21 +122,57 @@ public class ThreatStorage : IDisposable
             );
 
             CREATE INDEX IF NOT EXISTS idx_periods_created ON periods(created_at);
+
+            CREATE TABLE IF NOT EXISTS concept_documents (
+                concept_id TEXT NOT NULL,
+                doc_id TEXT NOT NULL,
+                doc_url TEXT,
+                doc_source TEXT,
+                PRIMARY KEY (concept_id, doc_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_concept_documents_concept ON concept_documents(concept_id);
+        ");
+
+        // Migration: add the emerging column to DBs created before it existed
+        // (CREATE TABLE IF NOT EXISTS above leaves old tables untouched).
+        try
+        {
+            connection.Execute("ALTER TABLE concepts ADD COLUMN emerging INTEGER DEFAULT 0");
+        }
+        catch (SqliteException)
+        {
+            // duplicate column — already migrated
+        }
+
+        // Migration: MSRC publishes a non-permalink <guid>CVE-...</guid>
+        // before the real <link>. Older parser builds stored that bare CVE id,
+        // which the dashboard then resolved against localhost. Repair legacy
+        // rows to the canonical MSRC advisory URL.
+        connection.Execute(@"
+            UPDATE concept_documents
+            SET doc_url = 'https://msrc.microsoft.com/update-guide/vulnerability/' || doc_url
+            WHERE doc_source = 'rss:api.msrc.microsoft.com'
+              AND doc_url LIKE 'CVE-%'
+              AND doc_url NOT LIKE 'http://%'
+              AND doc_url NOT LIKE 'https://%';
         ");
     }
 
     public async Task SaveDocumentAsync(ParsedDocument doc)
     {
-        await _connection.ExecuteAsync(
+        await using var connection = await OpenConnectionAsync();
+        await connection.ExecuteAsync(
             "INSERT OR REPLACE INTO documents (id, text, source, timestamp, metadata) VALUES (@Id, @Text, @Source, @Timestamp, @Metadata)",
             new { doc.Id, doc.Text, doc.Source, doc.Timestamp, Metadata = JsonConvert.SerializeObject(doc.Metadata) });
     }
 
     public async Task SaveConceptAsync(DetectedConcept concept)
     {
-        await _connection.ExecuteAsync(
-            "INSERT OR REPLACE INTO concepts (id, label, summary, first_seen, last_seen, document_count, strength, coordinates, source, sentences) " +
-            "VALUES (@ConceptId, @Label, @Summary, @FirstSeen, @LastSeen, @DocumentCount, @Strength, @Coordinates, @Source, @Sentences)",
+        await using var connection = await OpenConnectionAsync();
+        await connection.ExecuteAsync(
+            "INSERT OR REPLACE INTO concepts (id, label, summary, first_seen, last_seen, document_count, strength, coordinates, source, sentences, emerging) " +
+            "VALUES (@ConceptId, @Label, @Summary, @FirstSeen, @LastSeen, @DocumentCount, @Strength, @Coordinates, @Source, @Sentences, @Emerging)",
             new
             {
                 concept.ConceptId,
@@ -107,30 +185,34 @@ public class ThreatStorage : IDisposable
                 Coordinates = JsonConvert.SerializeObject(concept.Coordinates),
                 concept.Source,
                 Sentences = JsonConvert.SerializeObject(concept.Sentences),
+                Emerging = concept.Emerging ? 1 : 0,
             });
     }
 
     /// <summary>
     /// Record a per-period snapshot of a concept (used for temporal history/sparklines).
     /// </summary>
-    public async Task SaveConceptEventAsync(DetectedConcept concept, string eventType)
+    public async Task SaveConceptEventAsync(DetectedConcept concept, string eventType, string? periodId = null)
     {
         var payload = new
         {
-            periodId = concept.Source,
+            // The event period is the detection batch, not the feed name.
+            periodId = string.IsNullOrWhiteSpace(periodId) ? concept.Source : periodId,
             strength = concept.Strength,
             coordinates = concept.Coordinates,
             label = concept.Label,
             documentCount = concept.DocumentCount,
         };
-        await _connection.ExecuteAsync(
+        await using var connection = await OpenConnectionAsync();
+        await connection.ExecuteAsync(
             "INSERT INTO concept_events (concept_id, event_type, payload) VALUES (@ConceptId, @EventType, @Payload)",
             new { ConceptId = concept.ConceptId, EventType = eventType, Payload = JsonConvert.SerializeObject(payload) });
     }
 
     public async Task<List<Dictionary<string, object>>> GetConceptHistoryAsync(string conceptId, int limit = 200)
     {
-        var rows = await _connection.QueryAsync(
+        await using var connection = await OpenConnectionAsync();
+        var rows = await connection.QueryAsync(
             "SELECT event_type, payload, created_at FROM concept_events WHERE concept_id = @Id ORDER BY created_at DESC LIMIT @Limit",
             new { Id = conceptId, Limit = limit });
 
@@ -145,30 +227,86 @@ public class ThreatStorage : IDisposable
         return history;
     }
 
+    public async Task SaveConceptDocumentsAsync(IReadOnlyList<ConceptDocumentRow> rows)
+    {
+        if (rows.Count == 0) return;
+        await using var connection = await OpenConnectionAsync();
+        await using var tx = await connection.BeginTransactionAsync();
+        try
+        {
+            await connection.ExecuteAsync(
+                "INSERT OR IGNORE INTO concept_documents (concept_id, doc_id, doc_url, doc_source) VALUES (@ConceptId, @DocId, @Url, @Source)",
+                rows.Select(r => new { r.ConceptId, r.DocId, r.Url, r.Source }), tx);
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<Dictionary<string, List<(string Url, string Source)>>> GetConceptDocumentsAsync(
+        IEnumerable<string> conceptIds)
+    {
+        var ids = conceptIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var map = new Dictionary<string, List<(string Url, string Source)>>(StringComparer.OrdinalIgnoreCase);
+        if (ids.Count == 0) return map;
+
+        await using var connection = await OpenConnectionAsync();
+        var rows = await connection.QueryAsync(
+            "SELECT concept_id, doc_url, doc_source FROM concept_documents WHERE concept_id IN @Ids",
+            new { Ids = ids });
+
+        foreach (var row in rows)
+        {
+            var conceptId = (string)row.concept_id;
+            if (!map.TryGetValue(conceptId, out var list))
+            {
+                list = new List<(string Url, string Source)>();
+                map[conceptId] = list;
+            }
+            list.Add((((string?)row.doc_url) ?? "", ((string?)row.doc_source) ?? ""));
+        }
+        return map;
+    }
+
     public async Task<List<DetectedConcept>> GetRecentConceptsAsync(int limit = 50)
     {
-        var rows = await _connection.QueryAsync(
+        await using var connection = await OpenConnectionAsync();
+        var rows = await connection.QueryAsync(
             "SELECT * FROM concepts ORDER BY created_at DESC LIMIT @Limit",
             new { Limit = limit });
 
-        return rows.Select(r =>
+        return rows.Select(r => (DetectedConcept)MapConcept(r)).ToList();
+    }
+
+    public async Task<DetectedConcept?> GetConceptAsync(string id)
+    {
+        await using var connection = await OpenConnectionAsync();
+        var row = await connection.QuerySingleOrDefaultAsync(
+            "SELECT * FROM concepts WHERE id = @Id COLLATE NOCASE", new { Id = id });
+        return row is null ? null : MapConcept(row);
+    }
+
+    private static DetectedConcept MapConcept(dynamic r)
+    {
+        var coordinates = JsonConvert.DeserializeObject<List<double>>(((string?)r.coordinates) ?? "[]") ?? new List<double>();
+        var sentences = JsonConvert.DeserializeObject<List<string>>(((string?)r.sentences) ?? "[]") ?? new List<string>();
+        return new DetectedConcept
         {
-            var coordinates = JsonConvert.DeserializeObject<List<double>>(((string?)r.coordinates) ?? "[]") ?? new List<double>();
-            var sentences = JsonConvert.DeserializeObject<List<string>>(((string?)r.sentences) ?? "[]") ?? new List<string>();
-            return new DetectedConcept
-            {
-                ConceptId = (string)r.id,
-                Label = ((string?)r.label) ?? "",
-                Summary = ((string?)r.summary) ?? "",
-                FirstSeen = ParseDate(r.first_seen),
-                LastSeen = ParseDate(r.last_seen),
-                DocumentCount = (int)Convert.ToInt64(r.document_count),
-                Strength = (double)Convert.ToDouble(r.strength),
-                Coordinates = coordinates,
-                Source = ((string?)r.source) ?? "",
-                Sentences = sentences,
-            };
-        }).ToList();
+            ConceptId = (string)r.id,
+            Label = ((string?)r.label) ?? "",
+            Summary = ((string?)r.summary) ?? "",
+            FirstSeen = ParseDate(r.first_seen),
+            LastSeen = ParseDate(r.last_seen),
+            DocumentCount = (int)Convert.ToInt64(r.document_count),
+            Strength = (double)Convert.ToDouble(r.strength),
+            Coordinates = coordinates,
+            Source = ((string?)r.source) ?? "",
+            Sentences = sentences,
+            Emerging = Convert.ToInt64((object?)r.emerging ?? 0) == 1,
+        };
     }
 
     private static DateTime ParseDate(object? value)
@@ -185,7 +323,8 @@ public class ThreatStorage : IDisposable
     public async Task SavePeriodAsync(DetectionResult result)
     {
         var h = result.HeatmapDiffSummary;
-        await _connection.ExecuteAsync(
+        await using var connection = await OpenConnectionAsync();
+        await connection.ExecuteAsync(
             "INSERT OR REPLACE INTO periods (period_id, drift, drift_alert, max_diff, mean_diff, novel_concepts, total_concepts, total_documents, cluster_mode, summary, created_at) " +
             "VALUES (@PeriodId, @Drift, @DriftAlert, @MaxDiff, @MeanDiff, @NovelConcepts, @TotalConcepts, @TotalDocuments, @ClusterMode, @Summary, CURRENT_TIMESTAMP)",
             new
@@ -206,7 +345,7 @@ public class ThreatStorage : IDisposable
                         ? Array.Empty<object>()
                         : result.Concepts.Select(c => new
                         {
-                            c.ConceptId, c.Label, c.Summary, c.Strength, c.Coordinates, c.DocumentCount, emerging = true,
+                            c.ConceptId, c.Label, c.Summary, c.Strength, c.Coordinates, c.DocumentCount, emerging = c.Emerging,
                         }).ToArray(),
                 }),
             });
@@ -217,7 +356,8 @@ public class ThreatStorage : IDisposable
     /// </summary>
     public async Task<List<Dictionary<string, object>>> GetPeriodsAsync(int limit = 1000)
     {
-        var rows = await _connection.QueryAsync(
+        await using var connection = await OpenConnectionAsync();
+        var rows = await connection.QueryAsync(
             "SELECT period_id, drift, drift_alert, max_diff, mean_diff, novel_concepts, total_concepts, total_documents, cluster_mode, summary, created_at " +
             "FROM periods ORDER BY created_at ASC LIMIT @Limit",
             new { Limit = limit });
@@ -295,17 +435,19 @@ public class ThreatStorage : IDisposable
 
     public async Task<int> GetDocumentCountAsync()
     {
-        return await _connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM documents");
+        await using var connection = await OpenConnectionAsync();
+        return await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM documents");
     }
 
     public async Task<int> GetConceptCountAsync()
     {
-        return await _connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM concepts");
+        await using var connection = await OpenConnectionAsync();
+        return await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM concepts");
     }
 
     public void Dispose()
     {
-        _connection?.Dispose();
+        // Connections are scoped per operation; nothing long-lived to release.
         GC.SuppressFinalize(this);
     }
 }
